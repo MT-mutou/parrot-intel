@@ -1,0 +1,4 @@
+data/
+*.exe
+parrot-intel-linux-amd64
+*.db

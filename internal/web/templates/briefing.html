@@ -1,0 +1,23 @@
+{{template "layout" .}}
+
+{{define "content"}}
+<div class="page-head">
+  <h1>每日简报</h1>
+  <div class="page-actions">
+    <span class="meta-line mono">{{.Date}}</span>
+    <button class="btn" onclick="genBriefing(this)">⚡ AI 生成今日简报</button>
+    <button class="btn btn-primary" onclick="pushBriefing(this)">🔔 推送到钉钉</button>
+  </div>
+</div>
+
+<div id="briefing" class="card briefing">
+{{if .Content}}
+<div class="md">{{safeMD .Content}}</div>
+{{else}}
+<div class="empty">
+  <p>今日（{{.Date}}）简报尚未生成。</p>
+  <p class="hint">需要先收集文章，并配置 AI 后点击「AI 生成今日简报」。</p>
+</div>
+{{end}}
+</div>
+{{end}}

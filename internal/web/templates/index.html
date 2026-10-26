@@ -1,0 +1,68 @@
+{{template "layout" .}}
+
+{{define "content"}}
+<div class="toolbar">
+  <form class="searchbar" method="get" action="/">
+    <input type="search" name="q" value="{{.Search}}" placeholder="搜索标题 / 摘要，回车检索…">
+    <input type="hidden" name="category" value="{{.Category}}">
+    <input type="hidden" name="threat" value="{{.Threat}}">
+    <input type="hidden" name="filter" value="{{.Filter}}">
+    <button class="btn" type="submit">搜索</button>
+  </form>
+  <div class="chip-group">
+    <a class="chip {{if eq .Filter ""}}on{{end}}" href="/?category={{.Category}}&threat={{.Threat}}">全部</a>
+    <a class="chip {{if eq .Filter "unread"}}on{{end}}" href="/?filter=unread&category={{.Category}}&threat={{.Threat}}">未读</a>
+    <a class="chip {{if eq .Filter "starred"}}on{{end}}" href="/?filter=starred&category={{.Category}}&threat={{.Threat}}">收藏</a>
+    <span class="divider"></span>
+    <a class="chip t-high-c {{if eq .Threat "high"}}on{{end}}" href="/?threat=high&category={{.Category}}&filter={{.Filter}}">高危</a>
+    <a class="chip t-medium-c {{if eq .Threat "medium"}}on{{end}}" href="/?threat=medium&category={{.Category}}&filter={{.Filter}}">中危</a>
+  </div>
+  <div class="chip-group">
+    <a class="chip {{if eq .Category ""}}on{{end}}" href="/?threat={{.Threat}}&filter={{.Filter}}">全部分类</a>
+    {{range .Categories}}
+    <a class="chip {{if eq $.Category .}}on{{end}}" href="/?category={{.}}&threat={{$.Threat}}&filter={{$.Filter}}">{{.}}</a>
+    {{end}}
+  </div>
+</div>
+
+<p class="meta-line">共 {{.Total}} 条情报{{if .Search}} · 关键词「{{.Search}}」{{end}}</p>
+
+{{if .Articles}}
+<div class="feed">
+  {{range .Articles}}
+  <article class="card {{threatClass .ThreatLevel}} {{if eq .IsRead 1}}read{{end}}" data-id="{{.ID}}">
+    <div class="card-rail"></div>
+    <div class="card-body">
+      <div class="card-head">
+        <a class="card-title" href="/article/{{.ID}}">{{.Title}}</a>
+        {{if .ThreatLevel}}<span class="badge {{threatClass .ThreatLevel}}">{{threatLabel .ThreatLevel}}</span>{{end}}
+      </div>
+      {{if .Summary}}<p class="card-summary">{{.Summary}}</p>{{end}}
+      <div class="card-meta">
+        {{if .Category}}<span class="tag">{{.Category}}</span>{{end}}
+        {{range .Tags}}<span class="tag soft">{{.}}</span>{{end}}
+        {{range .CVEIDs}}<a class="cve" href="https://nvd.nist.gov/vuln/detail/{{.}}" target="_blank" rel="noopener">{{.}}</a>{{end}}
+        <span class="src">{{.SourceName}}</span>
+        <span class="time mono">{{fmtTime .PublishedAt}}</span>
+        <span class="spacer"></span>
+        <button class="icon-btn star {{if eq .IsStarred 1}}on{{end}}" onclick="toggleStar(this,'{{.ID}}')" title="收藏">★</button>
+        <a class="icon-btn" href="{{.URL}}" target="_blank" rel="noopener" title="查看原文">↗</a>
+      </div>
+    </div>
+  </article>
+  {{end}}
+</div>
+
+{{if gt .TotalPages 1}}
+<div class="pager">
+  {{if gt .Page 1}}<a class="btn" href="/?page={{.Page}}&category={{.Category}}&threat={{.Threat}}&filter={{.Filter}}&q={{.Search}}">‹ 上一页</a>{{end}}
+  <span class="mono">{{.Page}} / {{.TotalPages}}</span>
+  {{if lt .Page .TotalPages}}<a class="btn" href="/?page={{.Page | add1}}&category={{.Category}}&threat={{.Threat}}&filter={{.Filter}}&q={{.Search}}">下一页 ›</a>{{end}}
+</div>
+{{end}}
+{{else}}
+<div class="empty">
+  <p>暂无情报。点击右上角「立即收集」开始抓取。</p>
+</div>
+{{end}}
+{{end}}

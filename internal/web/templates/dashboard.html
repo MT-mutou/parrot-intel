@@ -1,0 +1,45 @@
+{{template "layout" .}}
+
+{{define "content"}}
+<div class="page-head"><h1>态势总览</h1></div>
+
+<div class="stat-grid">
+  <div class="stat"><span class="stat-num">{{.Stats.Total}}</span><span class="stat-label">情报总量</span></div>
+  <div class="stat"><span class="stat-num">{{.Stats.Today}}</span><span class="stat-label">今日新增</span></div>
+  <div class="stat"><span class="stat-num">{{.Stats.Unread}}</span><span class="stat-label">未读</span></div>
+  <div class="stat"><span class="stat-num">{{.Stats.Starred}}</span><span class="stat-label">收藏</span></div>
+  <div class="stat alert"><span class="stat-num">{{.Stats.HighThreat}}</span><span class="stat-label">高危情报</span></div>
+</div>
+
+<div class="two-col">
+  <div class="card">
+    <h3>近 7 日收集趋势</h3>
+    {{if .Stats.Last7Days}}
+    <div class="bars">
+      {{$max := 0}}{{range .Stats.Last7Days}}{{if gt .Count $max}}{{$max = .Count}}{{end}}{{end}}
+      {{range .Stats.Last7Days}}
+      <div class="bar-col" title="{{.Day}}：{{.Count}} 篇">
+        <div class="bar" style="height:{{if gt $max 0}}{{mul .Count 80 $max}}{{else}}0{{end}}px"></div>
+        <span class="bar-label mono">{{slice .Day 5}}</span>
+      </div>
+      {{end}}
+    </div>
+    {{else}}<p class="hint">暂无数据</p>{{end}}
+  </div>
+  <div class="card">
+    <h3>分类分布</h3>
+    {{if .Stats.ByCategory}}
+    <div class="hbars">
+      {{$total := .Stats.Total}}{{if eq $total 0}}{{$total = 1}}{{end}}
+      {{range .Stats.ByCategory}}
+      <div class="hbar-row">
+        <span class="hbar-label">{{.Category}}</span>
+        <div class="hbar-track"><div class="hbar" style="width:{{mul .Count 100 $total}}%"></div></div>
+        <span class="hbar-num mono">{{.Count}}</span>
+      </div>
+      {{end}}
+    </div>
+    {{else}}<p class="hint">暂无数据</p>{{end}}
+  </div>
+</div>
+{{end}}

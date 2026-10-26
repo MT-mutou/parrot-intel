@@ -1,0 +1,35 @@
+{{template "layout" .}}
+
+{{define "content"}}
+<div class="page-head"><h1>系统设置</h1></div>
+
+{{if .Saved}}<div class="notice ok">✓ 设置已保存</div>{{end}}
+
+<form method="post" action="/settings" class="card form">
+  <h3>🤖 AI 分析（OpenAI 兼容）</h3>
+  <p class="hint">配置后收集的文章将自动生成中文摘要、分类、威胁评级与通俗解读。支持 DeepSeek、通义千问、Kimi 等 OpenAI 兼容端点。</p>
+  <label>API 端点</label>
+  <input name="ai_endpoint" value="{{.Endpoint}}" placeholder="https://api.deepseek.com/v1">
+  <label>模型名称</label>
+  <input name="ai_model" value="{{.Model}}" placeholder="deepseek-chat">
+  <label>API Key <span class="hint-inline">{{if .APIKeySet}}已配置（{{.APIKeySet}}），留空表示不修改{{else}}未配置{{end}}</span></label>
+  <input name="ai_api_key" type="password" placeholder="{{if .APIKeySet}}留空保持不变{{else}}sk-…{{end}}">
+
+  <h3 style="margin-top:28px">🔔 钉钉推送</h3>
+  <p class="hint">钉钉群添加自定义机器人后，将 access_token 与加签 secret 填入。简报页可一键推送。</p>
+  <label>机器人 Access Token <span class="hint-inline">{{if .DingTokenSet}}已配置{{else}}未配置{{end}}</span></label>
+  <input name="ding_token" type="password" placeholder="{{if .DingTokenSet}}留空保持不变{{else}}access_token{{end}}">
+  <label>加签 Secret <span class="hint-inline">{{if .DingSecretSet}}已配置{{else}}未配置{{end}}</span></label>
+  <input name="ding_secret" type="password" placeholder="{{if .DingSecretSet}}留空保持不变{{else}}SEC…{{end}}">
+
+  <h3 style="margin-top:28px">⚙️ 收集计划</h3>
+  <label>每日自动收集时间（小时，0-23）</label>
+  <input name="collect_hour" value="{{.CollectHour}}" style="width:120px">
+  <label>服务器地址（用于钉钉消息中的链接）</label>
+  <input name="server_url" value="{{.ServerURL}}" placeholder="http://your-server-ip:8080">
+
+  <div style="margin-top:24px">
+    <button class="btn btn-primary" type="submit">保存设置</button>
+  </div>
+</form>
+{{end}}
