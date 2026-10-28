@@ -90,8 +90,159 @@ CREATE TABLE IF NOT EXISTS briefings (
   content TEXT,
   generated_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS push_channels (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT NOT NULL,           -- dingtalk / wecom / feishu / serverchan
+  name TEXT NOT NULL,
+  webhook TEXT,                 -- 机器人 Webhook 地址 / Server酱 SendKey
+  secret TEXT,                  -- 钉钉加签 / 飞书签名密钥
+  enabled INTEGER DEFAULT 1,
+  created_at TEXT,
+  last_push_at TEXT,
+  last_status TEXT
+);
 `)
 	return err
+}
+
+// ---------- Push Channels ----------
+
+// PushChannel 推送渠道
+type PushChannel struct {
+	ID         int64   `json:"id"`
+	Type       string  `json:"type"`
+	Name       string  `json:"name"`
+	Webhook    string  `json:"webhook"`
+	Secret     string  `json:"secret,omitempty"` // 不回传完整 secret
+	SecretSet  bool    `json:"secret_set"`
+	Enabled    int     `json:"enabled"`
+	LastPushAt *string `json:"last_push_at"`
+	LastStatus *string `json:"last_status"`
+}
+
+// ValidChannelTypes 支持的渠道类型
+var ValidChannelTypes = map[string]bool{
+	"dingtalk": true, "wecom": true, "feishu": true, "serverchan": true,
+}
+
+// ListChannels 全部推送渠道
+func (d *DB) ListChannels() ([]PushChannel, error) {
+	rows, err := d.sql.Query(`SELECT id, type, name, webhook, secret, enabled, last_push_at, last_status FROM push_channels ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := []PushChannel{}
+	for rows.Next() {
+		var c PushChannel
+		var secret sql.NullString
+		if err := rows.Scan(&c.ID, &c.Type, &c.Name, &c.Webhook, &secret, &c.Enabled, &c.LastPushAt, &c.LastStatus); err != nil {
+			return nil, err
+		}
+		c.SecretSet = secret.Valid && secret.String != ""
+		list = append(list, c)
+	}
+	return list, nil
+}
+
+// GetChannel 按 ID 取渠道（含完整 secret，仅内部使用）
+func (d *DB) GetChannel(id int64) (*PushChannel, error) {
+	var c PushChannel
+	var secret sql.NullString
+	err := d.sql.QueryRow(`SELECT id, type, name, webhook, secret, enabled, last_push_at, last_status FROM push_channels WHERE id=?`, id).
+		Scan(&c.ID, &c.Type, &c.Name, &c.Webhook, &secret, &c.Enabled, &c.LastPushAt, &c.LastStatus)
+	if err != nil {
+		return nil, err
+	}
+	if secret.Valid {
+		c.Secret = secret.String
+		c.SecretSet = true
+	}
+	return &c, nil
+}
+
+// AddChannel 新增渠道
+func (d *DB) AddChannel(typ, name, webhook, secret string) (int64, error) {
+	mu.Lock()
+	defer mu.Unlock()
+	res, err := d.sql.Exec(
+		`INSERT INTO push_channels (type, name, webhook, secret, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)`,
+		typ, name, nullIfEmpty(webhook), nullIfEmpty(secret), time.Now().Format(time.RFC3339))
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// UpdateChannel 更新渠道（空 secret = 保持不变）
+func (d *DB) UpdateChannel(id int64, name, webhook, secret string, enabled int) error {
+	mu.Lock()
+	defer mu.Unlock()
+	if secret != "" {
+		_, err := d.sql.Exec(`UPDATE push_channels SET name=?, webhook=?, secret=?, enabled=? WHERE id=?`,
+			name, nullIfEmpty(webhook), secret, enabled, id)
+		return err
+	}
+	_, err := d.sql.Exec(`UPDATE push_channels SET name=?, webhook=?, enabled=? WHERE id=?`,
+		name, nullIfEmpty(webhook), enabled, id)
+	return err
+}
+
+// DeleteChannel 删除渠道
+func (d *DB) DeleteChannel(id int64) error {
+	mu.Lock()
+	defer mu.Unlock()
+	_, err := d.sql.Exec(`DELETE FROM push_channels WHERE id=?`, id)
+	return err
+}
+
+// UpdateChannelStatus 记录推送结果
+func (d *DB) UpdateChannelStatus(id int64, status string) {
+	mu.Lock()
+	defer mu.Unlock()
+	d.sql.Exec(`UPDATE push_channels SET last_push_at=?, last_status=? WHERE id=?`,
+		time.Now().Format(time.RFC3339), status, id)
+}
+
+// EnabledChannels 启用的渠道（推送用，含 secret）
+func (d *DB) EnabledChannels() ([]PushChannel, error) {
+	rows, err := d.sql.Query(`SELECT id, type, name, webhook, secret, enabled, last_push_at, last_status FROM push_channels WHERE enabled=1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := []PushChannel{}
+	for rows.Next() {
+		var c PushChannel
+		var secret sql.NullString
+		if err := rows.Scan(&c.ID, &c.Type, &c.Name, &c.Webhook, &secret, &c.Enabled, &c.LastPushAt, &c.LastStatus); err != nil {
+			return nil, err
+		}
+		if secret.Valid {
+			c.Secret = secret.String
+		}
+		list = append(list, c)
+	}
+	return list, nil
+}
+
+// ListBriefingDates 简报日期列表（历史简报）
+func (d *DB) ListBriefingDates(limit int) ([]map[string]string, error) {
+	rows, err := d.sql.Query(`SELECT date, generated_at FROM briefings ORDER BY date DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := []map[string]string{}
+	for rows.Next() {
+		var date string
+		var gen sql.NullString
+		if err := rows.Scan(&date, &gen); err == nil {
+			list = append(list, map[string]string{"date": date, "generated_at": gen.String})
+		}
+	}
+	return list, nil
 }
 
 // ---------- Article ----------
@@ -339,13 +490,15 @@ func (d *DB) TodayArticles() ([]Article, error) {
 
 // Stats 仪表盘统计
 type Stats struct {
-	Total       int            `json:"total"`
-	Today       int            `json:"today"`
-	Unread      int            `json:"unread"`
-	Starred     int            `json:"starred"`
-	HighThreat  int            `json:"high_threat"`
-	ByCategory  []CategoryStat `json:"by_category"`
-	Last7Days   []DayStat      `json:"last_7days"`
+	Total      int            `json:"total"`
+	Today      int            `json:"today"`
+	Unread     int            `json:"unread"`
+	Starred    int            `json:"starred"`
+	HighThreat int            `json:"high_threat"`
+	ByCategory []CategoryStat `json:"by_category"`
+	BySource   []CategoryStat `json:"by_source"`
+	ByThreat   []CategoryStat `json:"by_threat"`
+	Last7Days  []DayStat      `json:"last_7days"`
 }
 
 // CategoryStat 分类统计
@@ -376,6 +529,24 @@ func (d *DB) GetStats() (*Stats, error) {
 			var c CategoryStat
 			rows.Scan(&c.Category, &c.Count)
 			s.ByCategory = append(s.ByCategory, c)
+		}
+	}
+	rows3, err := d.sql.Query(`SELECT COALESCE(source_name,'未知') src, COUNT(*) FROM articles GROUP BY src ORDER BY 2 DESC LIMIT 10`)
+	if err == nil {
+		defer rows3.Close()
+		for rows3.Next() {
+			var c CategoryStat
+			rows3.Scan(&c.Category, &c.Count)
+			s.BySource = append(s.BySource, c)
+		}
+	}
+	rows4, err := d.sql.Query(`SELECT COALESCE(threat_level,'未评') t, COUNT(*) FROM articles GROUP BY t`)
+	if err == nil {
+		defer rows4.Close()
+		for rows4.Next() {
+			var c CategoryStat
+			rows4.Scan(&c.Category, &c.Count)
+			s.ByThreat = append(s.ByThreat, c)
 		}
 	}
 	rows2, err := d.sql.Query(`SELECT date(collected_at) d, COUNT(*) FROM articles WHERE collected_at >= datetime('now','localtime','-7 days') GROUP BY d ORDER BY d`)
@@ -470,7 +641,7 @@ func (d *DB) UpdateSourceHealth(id int64, status string, errMsg string) {
 		time.Now().Format(time.RFC3339), status, nullIfEmpty(errMsg), id)
 }
 
-// SeedDefaults 首次运行写入默认安全源
+// SeedDefaults 首次运行写入默认安全源（40+ 国内外信息源）
 func (d *DB) SeedDefaults() {
 	var n int
 	d.sql.QueryRow(`SELECT COUNT(*) FROM sources`).Scan(&n)
@@ -478,26 +649,54 @@ func (d *DB) SeedDefaults() {
 		return
 	}
 	defaults := []Source{
+		// === 国内安全媒体 ===
 		{Name: "FreeBuf", URL: "https://www.freebuf.com/feed", Category: strPtr("安全媒体")},
 		{Name: "安全客", URL: "https://www.anquanke.com/rss", Category: strPtr("安全媒体")},
 		{Name: "安全牛", URL: "https://www.aqniu.com/feed", Category: strPtr("安全媒体")},
 		{Name: "嘶吼", URL: "https://www.4hou.com/feed", Category: strPtr("安全媒体")},
 		{Name: "安全内参", URL: "https://www.secrss.com/feeds", Category: strPtr("安全媒体")},
+		{Name: "安全脉搏", URL: "https://www.secpulse.com/feed", Category: strPtr("安全媒体")},
+		{Name: "跳跳糖社区", URL: "https://tttang.com/rss", Category: strPtr("安全媒体")},
+		{Name: "先知社区", URL: "https://xz.aliyun.com/feed", Category: strPtr("安全媒体")},
+		{Name: "数世咨询", URL: "https://www.dwcon.cn/feed", Category: strPtr("安全媒体")},
+		{Name: "中国信息安全", URL: "https://www.chinainfosec.com/feed", Category: strPtr("安全媒体")},
+		// === 国内技术研究 ===
 		{Name: "Seebug Paper", URL: "https://paper.seebug.org/rss/", Category: strPtr("技术研究")},
+		{Name: "看雪学苑", URL: "https://www.kanxue.com/rss.xml", Category: strPtr("技术研究")},
+		{Name: "X安全", URL: "https://x.threatbook.com/v5/rss", Category: strPtr("技术研究")},
+		// === 国内安全厂商 ===
 		{Name: "奇安信", URL: "https://www.qianxin.com/feed", Category: strPtr("厂商动态")},
+		{Name: "安恒信息", URL: "https://www.dbappsecurity.com.cn/feed", Category: strPtr("厂商动态")},
+		{Name: "深信服", URL: "https://www.sangfor.com.cn/feed", Category: strPtr("厂商动态")},
 		{Name: "绿盟科技", URL: "https://blog.nsfocus.net/feed/", Category: strPtr("厂商动态")},
 		{Name: "360 安全", URL: "https://blogs.360.cn/rss", Category: strPtr("厂商动态")},
 		{Name: "腾讯安全", URL: "https://security.tencent.com/index.php/feed", Category: strPtr("厂商动态")},
+		{Name: "阿里云安全", URL: "https://developer.aliyun.com/group/security/rss", Category: strPtr("厂商动态")},
+		{Name: "华为安全", URL: "https://www.huawei.com/cn/rss/security", Category: strPtr("厂商动态")},
+		// === 国内漏洞通报 ===
 		{Name: "CNVD", URL: "https://www.cnvd.org.cn/rss", Category: strPtr("漏洞通报")},
+		{Name: "CNNVD", URL: "http://www.cnnvd.org.cn/web/rss/rss.xml", Category: strPtr("漏洞通报")},
+		// === 国内政策法规 ===
+		{Name: "网信中国", URL: "http://www.cac.gov.cn/rss.xml", Category: strPtr("政策法规")},
+		{Name: "公安部网安局", URL: "http://www.mps.gov.cn/n2254314/rss.xml", Category: strPtr("政策法规")},
+		// === 国际安全媒体 ===
 		{Name: "The Hacker News", URL: "https://feeds.feedburner.com/TheHackersNews", Category: strPtr("国际媒体")},
 		{Name: "BleepingComputer", URL: "https://www.bleepingcomputer.com/feed/", Category: strPtr("国际媒体")},
 		{Name: "SecurityWeek", URL: "https://www.securityweek.com/feed/", Category: strPtr("国际媒体")},
 		{Name: "Dark Reading", URL: "https://www.darkreading.com/rss.xml", Category: strPtr("国际媒体")},
-		{Name: "CISA Alerts", URL: "https://www.cisa.gov/news.xml", Category: strPtr("国际通报")},
 		{Name: "SANS ISC", URL: "https://isc.sans.edu/rssfeed_full.xml", Category: strPtr("国际媒体")},
 		{Name: "Krebs on Security", URL: "https://krebsonsecurity.com/feed/", Category: strPtr("国际媒体")},
 		{Name: "Schneier on Security", URL: "https://www.schneier.com/blog/atom.xml", Category: strPtr("国际媒体")},
+		{Name: "Ars Technica Security", URL: "https://feeds.arstechnica.com/arstechnica/security", Category: strPtr("国际媒体")},
+		{Name: "ZDNet Security", URL: "https://www.zdnet.com/topic/security/rss.xml", Category: strPtr("国际媒体")},
+		// === 国际漏洞/研究/通报 ===
+		{Name: "CISA Alerts", URL: "https://www.cisa.gov/news.xml", Category: strPtr("国际通报")},
+		{Name: "NVD", URL: "https://nvd.nist.gov/feeds/xml/cve/misc/nvd-rss.xml", Category: strPtr("国际通报")},
+		{Name: "Google Project Zero", URL: "https://googleprojectzero.blogspot.com/feeds/posts/default", Category: strPtr("国际通报")},
+		{Name: "OWASP Blog", URL: "https://owasp.org/feed.xml", Category: strPtr("国际通报")},
+		// === AI 安全/泛科技 ===
 		{Name: "机器之心", URL: "https://www.jiqizhixin.com/rss", Category: strPtr("AI 安全")},
+		{Name: "量子位", URL: "https://www.qbitai.com/feed", Category: strPtr("AI 安全")},
 	}
 	for _, s := range defaults {
 		d.AddSource(s.Name, s.URL, deref(s.Category))

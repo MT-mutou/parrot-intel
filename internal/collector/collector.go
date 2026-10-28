@@ -22,8 +22,11 @@ import (
 // Collector 收集引擎
 type Collector struct {
 	DB  *db.DB
-	AI  *ai.Client
+	AI  func() *ai.Client // 每次收集实时读取设置（改配置无需重启）
 	Log *log.Logger
+
+	// OnDone 收集完成后回调（可选；用于自动简报推送等）
+	OnDone func(inserted, analyzed int)
 
 	running atomic.Bool
 	mu      sync.Mutex
@@ -93,30 +96,37 @@ func (c *Collector) run() {
 
 	// ② AI 分析未处理文章（已配置才执行）
 	analyzed := 0
-	if c.AI != nil && c.AI.Configured() {
-		pending, _ := c.DB.Unanalyzed(100)
-		for i, a := range pending {
-			c.setStatus(fmt.Sprintf("AI 分析中 %d/%d…", i+1, len(pending)))
-			input := a.Content
-			if input == "" {
-				input = a.Title
+	if c.AI != nil {
+		client := c.AI()
+		if client != nil && client.Configured() {
+			pending, _ := c.DB.Unanalyzed(100)
+			for i, a := range pending {
+				c.setStatus(fmt.Sprintf("AI 分析中 %d/%d…", i+1, len(pending)))
+				input := a.Content
+				if input == "" {
+					input = a.Title
+				}
+				an, err := client.AnalyzeArticle(a.Title, input)
+				if err != nil {
+					c.Log.Printf("[ai] %s: %v", a.ID, err)
+					continue
+				}
+				cves := extractCVEs(an.Summary + " " + strings.Join(an.Tags, " "))
+				if err := c.DB.UpdateAnalysis(a.ID, an.Summary, an.Category, an.Region, an.ThreatLevel, an.Tags, cves, an.PlainExplanation); err != nil {
+					c.Log.Printf("[ai] 写回失败 %s: %v", a.ID, err)
+				}
+				analyzed++
 			}
-			an, err := c.AI.AnalyzeArticle(a.Title, input)
-			if err != nil {
-				c.Log.Printf("[ai] %s: %v", a.ID, err)
-				continue
-			}
-			cves := extractCVEs(an.Summary + " " + strings.Join(an.Tags, " "))
-			if err := c.DB.UpdateAnalysis(a.ID, an.Summary, an.Category, an.Region, an.ThreatLevel, an.Tags, cves, an.PlainExplanation); err != nil {
-				c.Log.Printf("[ai] 写回失败 %s: %v", a.ID, err)
-			}
-			analyzed++
 		}
 	}
 
 	c.setStatus(fmt.Sprintf("完成：新增 %d 篇 · AI 分析 %d 篇 · 失败来源 %d 个 · 耗时 %s",
 		inserted.Load(), analyzed, failed.Load(), time.Since(start).Round(time.Second)))
 	c.Log.Printf("[collector] %s", c.status)
+
+	if c.OnDone != nil {
+		c.OnDone(int(inserted.Load()), analyzed)
+	}
 }
 
 // fetchSource 抓取单个 RSS 源，返回新增文章数

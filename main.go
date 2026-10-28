@@ -1,4 +1,4 @@
-// 鹦鹉情报站 ParrotIntel —— 单二进制威胁情报聚合平台
+// 鹦鹉情报站 ParrotIntel —— 单二进制威胁情报聚合平台（Vue3 前端 + Go API）
 //
 // 用法：parrot-intel [-addr :8080] [-data ./data]
 package main
@@ -14,6 +14,7 @@ import (
 	"parrot-intel/internal/ai"
 	"parrot-intel/internal/collector"
 	"parrot-intel/internal/db"
+	"parrot-intel/internal/notify"
 	"parrot-intel/internal/web"
 )
 
@@ -30,27 +31,33 @@ func main() {
 	}
 	database.SeedDefaults()
 
-	// AI 客户端（设置里配置 key 后生效；收集时实时读取）
-	aiCfg := func() ai.Config {
+	// AI 客户端工厂：每次调用实时读取设置（改配置无需重启）
+	aiFn := func() *ai.Client {
 		all := database.AllSettings()
-		return ai.Config{
+		return ai.New(ai.Config{
 			Endpoint: orDef(all["ai_endpoint"], "https://api.deepseek.com/v1"),
 			APIKey:   all["ai_api_key"],
 			Model:    orDef(all["ai_model"], "deepseek-chat"),
-		}
+		})
 	}
+
 	col := &collector.Collector{
 		DB:  database,
-		AI:  ai.New(aiCfg()), // 启动时快照；后续修改设置重启进程生效
+		AI:  aiFn,
 		Log: lg,
 	}
 
-	srv, err := web.New(database, col, lg)
-	if err != nil {
-		log.Fatalf("初始化 Web 服务失败: %v", err)
+	// 收集完成后：若开启自动简报推送，生成并推送到所有启用渠道
+	col.OnDone = func(inserted, analyzed int) {
+		if database.GetSetting("auto_briefing_push", "") != "true" {
+			return
+		}
+		go autoBriefing(database, aiFn, lg)
 	}
 
-	// 定时收集：每分钟检查一次是否到达设定小时
+	srv := web.New(database, col, aiFn, lg)
+
+	// 定时收集：每分钟检查是否到达设定小时
 	go func() {
 		lastRun := ""
 		for {
@@ -78,6 +85,59 @@ func main() {
 	}
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("服务退出: %v", err)
+	}
+}
+
+// autoBriefing 生成当日简报并推送全部启用渠道
+func autoBriefing(database *db.DB, aiFn func() *ai.Client, lg *log.Logger) {
+	items, err := database.TodayArticles()
+	if err != nil || len(items) == 0 {
+		lg.Printf("[auto-briefing] 今日无文章，跳过")
+		return
+	}
+	c := aiFn()
+	if !c.Configured() {
+		lg.Printf("[auto-briefing] 未配置 AI，跳过")
+		return
+	}
+	var bis []ai.BriefingItem
+	for _, it := range items {
+		sum, threat := "", ""
+		if it.Summary != nil {
+			sum = *it.Summary
+		}
+		if it.ThreatLevel != nil {
+			threat = *it.ThreatLevel
+		}
+		bis = append(bis, ai.BriefingItem{Title: it.Title, Summary: sum, Threat: threat})
+	}
+	md, err := c.GenerateBriefing(bis)
+	if err != nil {
+		lg.Printf("[auto-briefing] 生成失败: %v", err)
+		return
+	}
+	date := time.Now().Format("2006-01-02")
+	database.SaveBriefing(date, md)
+
+	channels, _ := database.EnabledChannels()
+	if len(channels) == 0 {
+		lg.Printf("[auto-briefing] 无启用渠道，仅保存")
+		return
+	}
+	title := "🦜 鹦鹉情报站 · 每日安全简报 " + date
+	for _, ch := range channels {
+		sender, err := notify.NewSender(ch.Type, ch.Webhook, ch.Secret)
+		if err != nil {
+			database.UpdateChannelStatus(ch.ID, "error: "+err.Error())
+			continue
+		}
+		if err := sender.SendMarkdown(title, notify.TruncateMD(md, 18000)); err != nil {
+			database.UpdateChannelStatus(ch.ID, "error: "+err.Error())
+			lg.Printf("[auto-briefing] 推送 %s 失败: %v", ch.Name, err)
+			continue
+		}
+		database.UpdateChannelStatus(ch.ID, "success")
+		lg.Printf("[auto-briefing] 已推送 %s", ch.Name)
 	}
 }
 

@@ -2,3 +2,5 @@ data/
 *.exe
 parrot-intel-linux-amd64
 *.db
+webapp/node_modules/
+internal/web/dist/assets/
