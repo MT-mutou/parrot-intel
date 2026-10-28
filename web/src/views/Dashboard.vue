@@ -75,14 +75,14 @@ const trendRef = ref(), threatRef = ref(), catRef = ref()
 let charts = []
 const accentColor = ref(document.documentElement.classList.contains('light') ? '#0284c7' : '#38bdf8')
 
-const metrics = [
-  { label: '情报总量', icon: '📋', bg: 'rgba(56,189,248,.12)', color: '#38bdf8' },
-  { label: '今日新增', icon: '🆕', bg: 'rgba(129,140,248,.12)', color: '#818cf8' },
-  { label: '高危情报', icon: '🚨', bg: 'rgba(239,68,68,.12)', color: '#f87171' },
-  { label: '未读', icon: '📬', bg: 'rgba(245,158,11,.12)', color: '#fbbf24' },
-  { label: '收藏', icon: '⭐', bg: 'rgba(234,179,8,.12)', color: '#facc15' },
-  { label: '今日简报', icon: '📝', bg: 'rgba(34,197,94,.12)', color: '#4ade80' },
-]
+const metrics = reactive([
+  { label: '情报总量', icon: '📋', bg: 'rgba(56,189,248,.12)', color: '#38bdf8', value: 0 },
+  { label: '今日新增', icon: '🆕', bg: 'rgba(129,140,248,.12)', color: '#818cf8', value: 0 },
+  { label: '高危情报', icon: '🚨', bg: 'rgba(239,68,68,.12)', color: '#f87171', value: 0 },
+  { label: '未读', icon: '📬', bg: 'rgba(245,158,11,.12)', color: '#fbbf24', value: 0 },
+  { label: '收藏', icon: '⭐', bg: 'rgba(234,179,8,.12)', color: '#facc15', value: 0 },
+  { label: '今日简报', icon: '📝', bg: 'rgba(34,197,94,.12)', color: '#4ade80', value: '—' },
+])
 
 async function load() {
   const s = await api.getStats()

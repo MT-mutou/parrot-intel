@@ -65,10 +65,10 @@ func (s *Server) apiListArticles(w http.ResponseWriter, r *http.Request) {
 		limit = 25
 	}
 	writeJSON(w, map[string]any{
-		"articles":   arts,
-		"total":      total,
-		"page":       page,
-		"limit":      limit,
+		"articles":    arts,
+		"total":       total,
+		"page":        page,
+		"limit":       limit,
 		"total_pages": (total + limit - 1) / limit,
 	})
 }
@@ -150,6 +150,8 @@ func (s *Server) apiAddSource(w http.ResponseWriter, r *http.Request) {
 		Name     string `json:"name"`
 		URL      string `json:"url"`
 		Category string `json:"category"`
+		Type     string `json:"type"`
+		Config   string `json:"config"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeErr(w, 400, "请求体错误")
@@ -159,7 +161,24 @@ func (s *Server) apiAddSource(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "名称和 URL 必填")
 		return
 	}
-	if err := s.DB.AddSource(req.Name, req.URL, req.Category); err != nil {
+	switch req.Type {
+	case "", "rss", "html", "nvd", "ghsa":
+	default:
+		writeErr(w, 400, "不支持的来源类型: "+req.Type)
+		return
+	}
+	if req.Type == "html" {
+		var cfg map[string]any
+		if err := json.Unmarshal([]byte(req.Config), &cfg); err != nil {
+			writeErr(w, 400, "爬虫配置不是合法 JSON: "+err.Error())
+			return
+		}
+		if cfg["item"] == nil || cfg["title"] == nil || cfg["link"] == nil {
+			writeErr(w, 400, "爬虫配置需包含 item / title / link 选择器")
+			return
+		}
+	}
+	if err := s.DB.AddSource(req.Name, req.URL, req.Category, req.Type, req.Config); err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
@@ -198,12 +217,13 @@ func (s *Server) apiGetSettings(w http.ResponseWriter, r *http.Request) {
 		return def
 	}
 	writeJSON(w, map[string]any{
-		"ai_endpoint":       get("ai_endpoint", "https://api.deepseek.com/v1"),
-		"ai_model":          get("ai_model", "deepseek-chat"),
-		"ai_api_key_set":    all["ai_api_key"] != "",
-		"server_url":        all["server_url"],
-		"collect_hour":      get("collect_hour", "9"),
+		"ai_endpoint":        get("ai_endpoint", "https://api.deepseek.com/v1"),
+		"ai_model":           get("ai_model", "deepseek-chat"),
+		"ai_api_key_set":     all["ai_api_key"] != "",
+		"server_url":         all["server_url"],
+		"collect_hour":       get("collect_hour", "9"),
 		"auto_briefing_push": all["auto_briefing_push"] == "true",
+		"collector_proxy":    all["collector_proxy"],
 	})
 }
 
@@ -218,6 +238,12 @@ func (s *Server) apiSaveSettings(w http.ResponseWriter, r *http.Request) {
 	for _, k := range strKeys {
 		if v, ok := req[k]; ok && strings.TrimSpace(v) != "" {
 			s.DB.SetSetting(k, strings.TrimSpace(v))
+		}
+	}
+	// collector_proxy 允许显式清空（境内服务器不需要时）
+	if v, ok := req["collector_proxy"]; ok {
+		if pu := strings.TrimSpace(v); pu == "" || strings.HasPrefix(pu, "http://") || strings.HasPrefix(pu, "https://") {
+			s.DB.SetSetting("collector_proxy", pu)
 		}
 	}
 	if v, ok := req["auto_briefing_push"]; ok {

@@ -75,6 +75,8 @@ CREATE TABLE IF NOT EXISTS sources (
   url TEXT NOT NULL UNIQUE,
   category TEXT,
   enabled INTEGER DEFAULT 1,
+  type TEXT NOT NULL DEFAULT 'rss',
+  config TEXT,
   last_fetch_at TEXT,
   last_status TEXT,
   last_error TEXT,
@@ -104,7 +106,22 @@ CREATE TABLE IF NOT EXISTS push_channels (
   last_status TEXT
 );
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	// 旧库迁移：sources 表补充 type / config 列（v2.2.2 爬虫收集器）
+	for _, m := range []struct{ col, ddl string }{
+		{"type", `ALTER TABLE sources ADD COLUMN type TEXT NOT NULL DEFAULT 'rss'`},
+		{"config", `ALTER TABLE sources ADD COLUMN config TEXT`},
+	} {
+		var cnt int
+		if err := d.sql.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sources') WHERE name=?`, m.col).Scan(&cnt); err == nil && cnt == 0 {
+			if _, err := d.sql.Exec(m.ddl); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // ---------- Push Channels ----------
@@ -250,22 +267,22 @@ func (d *DB) ListBriefingDates(limit int) ([]map[string]string, error) {
 
 // Article 文章（列表查询不含 content）
 type Article struct {
-	ID              string  `json:"id"`
-	Title           string  `json:"title"`
-	URL             string  `json:"url"`
-	SourceName      string  `json:"source_name"`
-	SourceURL       string  `json:"source_url"`
-	Summary         *string `json:"summary"`
-	Category        *string `json:"category"`
-	ThreatLevel     *string `json:"threat_level"`
-	Region          *string `json:"region"`
-	Tags            []string `json:"tags"`
-	CVEIDs          []string `json:"cve_ids"`
-	PlainExplanation *string `json:"plain_explanation"`
-	PublishedAt     *string `json:"published_at"`
-	IsRead          int     `json:"is_read"`
-	IsStarred       int     `json:"is_starred"`
-	AIAnalyzed      int     `json:"ai_analyzed"`
+	ID               string   `json:"id"`
+	Title            string   `json:"title"`
+	URL              string   `json:"url"`
+	SourceName       string   `json:"source_name"`
+	SourceURL        string   `json:"source_url"`
+	Summary          *string  `json:"summary"`
+	Category         *string  `json:"category"`
+	ThreatLevel      *string  `json:"threat_level"`
+	Region           *string  `json:"region"`
+	Tags             []string `json:"tags"`
+	CVEIDs           []string `json:"cve_ids"`
+	PlainExplanation *string  `json:"plain_explanation"`
+	PublishedAt      *string  `json:"published_at"`
+	IsRead           int      `json:"is_read"`
+	IsStarred        int      `json:"is_starred"`
+	AIAnalyzed       int      `json:"ai_analyzed"`
 	// Content 仅详情查询填充，列表查询不取（性能关键）
 	Content string `json:"content,omitempty"`
 }
@@ -414,6 +431,17 @@ func (d *DB) InsertArticle(id, title, url, sourceName, sourceURL, summary, conte
 	return n > 0
 }
 
+// SetArticleMeta 结构化来源（NVD/GitHub 通告/爬虫）入库时直接写威胁等级与 CVE，
+// 不置 ai_analyzed=1 —— AI 仍可继续生成中文摘要与通俗解读。
+func (d *DB) SetArticleMeta(id, threat string, cves, tags []string) error {
+	mu.Lock()
+	defer mu.Unlock()
+	_, err := d.sql.Exec(
+		`UPDATE articles SET threat_level=COALESCE(?, threat_level), cve_ids=COALESCE(?, cve_ids), tags=COALESCE(?, tags) WHERE id=?`,
+		nullIfEmpty(threat), toJSONArr(cves), toJSONArr(tags), id)
+	return err
+}
+
 // UpdateAnalysis 写回 AI 分析结果
 func (d *DB) UpdateAnalysis(id string, summary, category, region, threat string, tags, cves []string, plain string) error {
 	mu.Lock()
@@ -476,7 +504,7 @@ func (d *DB) MarkRead(id string) error {
 // TodayArticles 简报用：当日文章摘要列表
 func (d *DB) TodayArticles() ([]Article, error) {
 	rows, err := d.sql.Query(
-		`SELECT `+listCols+` FROM articles
+		`SELECT ` + listCols + ` FROM articles
 		 WHERE date(collected_at) = date('now','localtime')
 		 ORDER BY CASE threat_level WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, published_at DESC LIMIT 200`)
 	if err != nil {
@@ -576,6 +604,8 @@ type Source struct {
 	URL        string  `json:"url"`
 	Category   *string `json:"category"`
 	Enabled    int     `json:"enabled"`
+	Type       string  `json:"type"`   // rss / html / nvd / ghsa
+	Config     *string `json:"config"` // html 爬虫的选择器配置（JSON）
 	LastFetch  *string `json:"last_fetch_at"`
 	LastStatus *string `json:"last_status"`
 	LastError  *string `json:"last_error"`
@@ -583,7 +613,7 @@ type Source struct {
 
 // ListSources 全部来源
 func (d *DB) ListSources() ([]Source, error) {
-	rows, err := d.sql.Query(`SELECT id, name, url, category, enabled, last_fetch_at, last_status, last_error FROM sources ORDER BY category, name`)
+	rows, err := d.sql.Query(`SELECT id, name, url, category, enabled, type, config, last_fetch_at, last_status, last_error FROM sources ORDER BY category, name`)
 	if err != nil {
 		return nil, err
 	}
@@ -591,8 +621,11 @@ func (d *DB) ListSources() ([]Source, error) {
 	list := []Source{}
 	for rows.Next() {
 		var s Source
-		if err := rows.Scan(&s.ID, &s.Name, &s.URL, &s.Category, &s.Enabled, &s.LastFetch, &s.LastStatus, &s.LastError); err != nil {
+		if err := rows.Scan(&s.ID, &s.Name, &s.URL, &s.Category, &s.Enabled, &s.Type, &s.Config, &s.LastFetch, &s.LastStatus, &s.LastError); err != nil {
 			return nil, err
+		}
+		if s.Type == "" {
+			s.Type = "rss"
 		}
 		list = append(list, s)
 	}
@@ -601,7 +634,7 @@ func (d *DB) ListSources() ([]Source, error) {
 
 // EnabledSources 启用的来源
 func (d *DB) EnabledSources() ([]Source, error) {
-	rows, err := d.sql.Query(`SELECT id, name, url, category, enabled, last_fetch_at, last_status, last_error FROM sources WHERE enabled=1`)
+	rows, err := d.sql.Query(`SELECT id, name, url, category, enabled, type, config, last_fetch_at, last_status, last_error FROM sources WHERE enabled=1`)
 	if err != nil {
 		return nil, err
 	}
@@ -609,17 +642,24 @@ func (d *DB) EnabledSources() ([]Source, error) {
 	list := []Source{}
 	for rows.Next() {
 		var s Source
-		rows.Scan(&s.ID, &s.Name, &s.URL, &s.Category, &s.Enabled, &s.LastFetch, &s.LastStatus, &s.LastError)
+		rows.Scan(&s.ID, &s.Name, &s.URL, &s.Category, &s.Enabled, &s.Type, &s.Config, &s.LastFetch, &s.LastStatus, &s.LastError)
+		if s.Type == "" {
+			s.Type = "rss"
+		}
 		list = append(list, s)
 	}
 	return list, nil
 }
 
-// AddSource 新增来源
-func (d *DB) AddSource(name, url, category string) error {
+// AddSource 新增来源（typ: rss/html/nvd/ghsa，config 为 html 爬虫 JSON 配置）
+func (d *DB) AddSource(name, url, category, typ, config string) error {
 	mu.Lock()
 	defer mu.Unlock()
-	_, err := d.sql.Exec(`INSERT OR IGNORE INTO sources (name, url, category) VALUES (?, ?, ?)`, name, url, nullIfEmpty(category))
+	if typ == "" {
+		typ = "rss"
+	}
+	_, err := d.sql.Exec(`INSERT OR IGNORE INTO sources (name, url, category, type, config) VALUES (?, ?, ?, ?, ?)`,
+		name, url, nullIfEmpty(category), typ, nullIfEmpty(config))
 	return err
 }
 
@@ -679,6 +719,10 @@ func (d *DB) SeedDefaults() {
 		{Name: "CISA 新闻", URL: "https://www.cisa.gov/news.xml", Category: strPtr("漏洞通报")},
 		{Name: "CISA 安全通告", URL: "https://www.cisa.gov/cybersecurity-advisories/all.xml", Category: strPtr("漏洞通报")},
 		{Name: "英国 NCSC", URL: "https://www.ncsc.gov.uk/api/1/services/v1/report-rss-feed.xml", Category: strPtr("漏洞通报")},
+		// NVD 官方 CVE API 2.0（JSON 接口，无需 Key）：替代无 RSS 且有反爬的 CNVD/CNNVD 官网
+		{Name: "NVD 最新漏洞", URL: "https://services.nvd.nist.gov/rest/json/cves/2.0", Category: strPtr("漏洞通报"), Type: "nvd"},
+		// GitHub 安全通告 API（开源生态漏洞/供应链风险，公开无需 Key）
+		{Name: "GitHub 安全通告", URL: "https://api.github.com/advisories", Category: strPtr("漏洞通报"), Type: "ghsa"},
 
 		// === 国际媒体 ===
 		{Name: "The Hacker News", URL: "https://feeds.feedburner.com/TheHackersNews", Category: strPtr("国际媒体")},
@@ -708,12 +752,16 @@ func (d *DB) SeedDefaults() {
 	names := make([]string, 0, len(defaults))
 	for _, s := range defaults {
 		cat := deref(s.Category)
-		// 同名源 → 更新为最新 URL/分类（修复旧版本遗留的失效地址）
-		if res, err := d.sql.Exec(`UPDATE sources SET url=?, category=? WHERE name=?`,
-			s.URL, nullIfEmpty(cat), s.Name); err == nil {
+		typ := s.Type
+		if typ == "" {
+			typ = "rss"
+		}
+		// 同名源 → 更新为最新 URL/分类/类型（修复旧版本遗留的失效地址）
+		if res, err := d.sql.Exec(`UPDATE sources SET url=?, category=?, type=? WHERE name=?`,
+			s.URL, nullIfEmpty(cat), typ, s.Name); err == nil {
 			if n, _ := res.RowsAffected(); n == 0 {
-				d.sql.Exec(`INSERT OR IGNORE INTO sources (name, url, category) VALUES (?, ?, ?)`,
-					s.Name, s.URL, nullIfEmpty(cat))
+				d.sql.Exec(`INSERT OR IGNORE INTO sources (name, url, category, type) VALUES (?, ?, ?, ?)`,
+					s.Name, s.URL, nullIfEmpty(cat), typ)
 			}
 		}
 		names = append(names, s.Name)
@@ -729,6 +777,17 @@ func (d *DB) SeedDefaults() {
 		}
 		d.sql.Exec(`UPDATE sources SET enabled=0 WHERE last_status='error' AND name NOT IN (`+ph+`)`, args...)
 		d.SetSetting("seed_migration_v221", time.Now().Format(time.RFC3339))
+	}
+	// 一次性迁移（v2.2.2）：再清一轮 v2.1 时代遗留的死源（安全牛/看雪/安全内参等已确认失效），
+	// 与 v221 逻辑相同——只停用非默认且抓取失败的源，不影响默认源与用户自建源
+	if d.GetSetting("seed_migration_v222", "") == "" {
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(names)), ",")
+		args := make([]any, len(names))
+		for i, n := range names {
+			args[i] = n
+		}
+		d.sql.Exec(`UPDATE sources SET enabled=0 WHERE last_status='error' AND name NOT IN (`+ph+`)`, args...)
+		d.SetSetting("seed_migration_v222", time.Now().Format(time.RFC3339))
 	}
 }
 

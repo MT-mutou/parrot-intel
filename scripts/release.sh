@@ -7,7 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VER="${VER:-2.2.1}"
+VER="${VER:-2.2.2}"
 OUT="release/parrot-intel-v${VER}"
 
 echo ">> [1/4] 构建前端..."

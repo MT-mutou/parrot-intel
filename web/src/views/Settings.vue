@@ -65,6 +65,19 @@
       </el-form>
     </div>
 
+    <!-- 网络代理 -->
+    <div class="panel" style="margin-bottom: 20px;">
+      <div style="font-weight: 600; color: var(--p-accent); margin-bottom: 4px;">收集网络代理</div>
+      <div style="font-size: 12px; color: var(--p-text-3); margin-bottom: 14px;">
+        境内服务器无法直连部分国际源（feedburner / blogspot / Google 系等）。若有可用的 HTTP 代理，填入后所有情报抓取将经代理转发；留空则直连。
+      </div>
+      <el-form label-width="120">
+        <el-form-item label="代理地址">
+          <el-input v-model="form.collector_proxy" placeholder="http://127.0.0.1:7890（留空=不使用代理）" />
+        </el-form-item>
+      </el-form>
+    </div>
+
     <el-button type="primary" size="large" :loading="saving" @click="save" style="width: 160px;">保存设置</el-button>
   </div>
 </template>
@@ -141,7 +154,7 @@ function detectProvider(endpoint) {
 
 const form = ref({
   ai_endpoint: '', ai_model: '', ai_api_key: '', ai_api_key_set: false,
-  collect_hour: '9', auto_briefing_push: false, server_url: '',
+  collect_hour: '9', auto_briefing_push: false, server_url: '', collector_proxy: '',
 })
 const saving = ref(false)
 
@@ -161,6 +174,7 @@ async function save() {
       collect_hour: form.value.collect_hour,
       auto_briefing_push: String(form.value.auto_briefing_push),
       server_url: form.value.server_url,
+      collector_proxy: form.value.collector_proxy || '',
     })
     ElMessage.success('设置已保存，即时生效（无需重启）')
     form.value.ai_api_key = ''

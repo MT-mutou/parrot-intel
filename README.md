@@ -94,7 +94,7 @@ cd web && npm run build && API_PROXY_TARGET=http://127.0.0.1:8080 npm run previe
 
 ```bash
 # 服务器上执行（需已安装 Nginx）：
-curl -L -o /tmp/parrot-intel.tar.gz https://github.com/MT-mutou/parrot-intel/releases/download/v2.2.1/parrot-intel-v2.2.1.tar.gz
+curl -L -o /tmp/parrot-intel.tar.gz https://github.com/MT-mutou/parrot-intel/releases/download/v2.2.2/parrot-intel-v2.2.2.tar.gz
 mkdir -p /opt/parrot-intel-release
 tar -xzf /tmp/parrot-intel.tar.gz -C /opt/parrot-intel-release --strip-components=1
 cd /opt/parrot-intel-release && sudo bash deploy/deploy.sh
@@ -108,17 +108,17 @@ cd /opt/parrot-intel-release && sudo bash deploy/deploy.sh
 
 ```bash
 bash scripts/release.sh        # 或 make release
-# → release/parrot-intel-v2.2.0.tar.gz（前端产物 + linux/amd64 后端 + 部署配置）
+# → release/parrot-intel-v2.2.2.tar.gz（前端产物 + linux/amd64 后端 + 部署配置）
 ```
 
 #### ② 上传并一键部署（服务器需已安装 Nginx）
 
 ```bash
-scp release/parrot-intel-v2.2.0.tar.gz root@服务器IP:/tmp/
+scp release/parrot-intel-v2.2.2.tar.gz root@服务器IP:/tmp/
 
 # 服务器上：
 mkdir -p /opt/parrot-intel-release
-tar -xzf /tmp/parrot-intel-v2.2.0.tar.gz -C /opt/parrot-intel-release --strip-components=1
+tar -xzf /tmp/parrot-intel-v2.2.2.tar.gz -C /opt/parrot-intel-release --strip-components=1
 cd /opt/parrot-intel-release
 sudo bash deploy/deploy.sh
 ```
