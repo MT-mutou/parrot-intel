@@ -84,16 +84,30 @@ cd web && npm install && npm run dev
 cd web && npm run build && API_PROXY_TARGET=http://127.0.0.1:8080 npm run preview
 ```
 
-## 打包发布 → 部署（阿里云）
+## 部署
 
-### ① 开发机打包（产出单个 tar.gz）
+### 方式一：从 GitHub Release 拉取部署（服务器推荐，无需 Node/Go 环境）
+
+```bash
+# 服务器上执行（需已安装 Nginx）：
+curl -L -o /tmp/parrot-intel.tar.gz https://github.com/MT-mutou/parrot-intel/releases/download/v2.1.0/parrot-intel-v2.1.0.tar.gz
+mkdir -p /opt/parrot-intel-release
+tar -xzf /tmp/parrot-intel.tar.gz -C /opt/parrot-intel-release --strip-components=1
+cd /opt/parrot-intel-release && sudo bash deploy/deploy.sh
+```
+
+> 部署包（后端 linux/amd64 二进制 + 前端构建产物 + 部署配置）托管在 [Releases](https://github.com/MT-mutou/parrot-intel/releases)，公开仓库匿名可下。源码 `git clone` 后需在装有 Node 20+ 与 Go 1.22+ 的环境自行构建，服务器直接用 Release 包即可。
+
+### 方式二：本机打包上传
+
+#### ① 开发机打包（产出单个 tar.gz）
 
 ```bash
 bash scripts/release.sh        # 或 make release
 # → release/parrot-intel-v2.1.0.tar.gz（前端产物 + linux/amd64 后端 + 部署配置）
 ```
 
-### ② 上传并一键部署（服务器需已安装 Nginx）
+#### ② 上传并一键部署（服务器需已安装 Nginx）
 
 ```bash
 scp release/parrot-intel-v2.1.0.tar.gz root@服务器IP:/tmp/
@@ -109,7 +123,7 @@ sudo bash deploy/deploy.sh
 
 完成后访问 `http://服务器IP/`（80 端口）。升级 = 重复上述三步（数据目录不受影响）。
 
-### ③ 数据备份（建议）
+### 数据备份（建议）
 
 ```bash
 # 安装备份脚本 + crontab（每天 03:00，保留 14 天）
