@@ -18,12 +18,12 @@
           <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
             <span style="font-size: 22px;">{{ icon(c.type) }}</span>
             <div style="flex: 1">
-              <div style="font-weight: 600; color: #dce8f5;">{{ c.name }}</div>
-              <div style="font-size: 12px; color: #64748b;">{{ typeLabel(c.type) }}</div>
+              <div style="font-weight: 600; color: var(--p-card-title);">{{ c.name }}</div>
+              <div style="font-size: 12px; color: var(--p-text-3);">{{ typeLabel(c.type) }}</div>
             </div>
             <el-switch :model-value="c.enabled === 1" @change="toggleEnabled(c)" />
           </div>
-          <div class="mono" style="font-size: 12px; color: #475569; margin-bottom: 6px; word-break: break-all;">
+          <div class="mono" style="font-size: 12px; color: var(--p-text-3); margin-bottom: 6px; word-break: break-all;">
             {{ maskWebhook(c.webhook) }}
           </div>
           <div style="font-size: 12px; margin-bottom: 12px;">

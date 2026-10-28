@@ -7,8 +7,8 @@
     </el-page-header>
 
     <div class="panel">
-      <h2 style="margin: 0 0 10px; color: #e8f1fa; line-height: 1.5;">{{ a.title }}</h2>
-      <div class="article-card meta" style="margin-bottom: 14px; display: flex; gap: 12px; flex-wrap: wrap; font-size: 13px; color: #64748b;">
+      <h2 style="margin: 0 0 10px; color: var(--p-text); line-height: 1.5;">{{ a.title }}</h2>
+      <div class="article-card meta" style="margin-bottom: 14px; display: flex; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--p-text-3);">
         <span v-if="a.threat_level" class="threat-tag" :class="'threat-' + a.threat_level">{{ threatLabel(a.threat_level) }}</span>
         <el-tag v-if="a.category" size="small" effect="plain">{{ a.category }}</el-tag>
         <span v-if="a.region">{{ a.region }}</span>
@@ -34,8 +34,8 @@
                   type="info" :closable="false" style="margin-bottom: 14px;" />
 
         <div v-if="a.summary" style="margin-bottom: 14px;">
-          <div style="font-weight: 600; color: #38bdf8; margin-bottom: 6px;">AI 摘要</div>
-          <div style="color: #c9d6e4; line-height: 1.8;">{{ a.summary }}</div>
+          <div style="font-weight: 600; color: var(--p-accent); margin-bottom: 6px;">AI 摘要</div>
+          <div style="color: var(--p-text-1); line-height: 1.8;">{{ a.summary }}</div>
         </div>
 
         <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
@@ -50,8 +50,8 @@
       <el-divider />
 
       <!-- 原文内容 -->
-      <div style="font-weight: 600; color: #8ea2b8; margin-bottom: 8px;">原文内容</div>
-      <div style="color: #a8b9cc; line-height: 1.9; white-space: pre-wrap; font-size: 14px; max-height: 520px; overflow-y: auto;">{{ a.content || '（原文内容为空，请查看原文链接）' }}</div>
+      <div style="font-weight: 600; color: var(--p-text-2); margin-bottom: 8px;">原文内容</div>
+      <div style="color: var(--p-text-1); line-height: 1.9; white-space: pre-wrap; font-size: 14px; max-height: 520px; overflow-y: auto;">{{ a.content || '（原文内容为空，请查看原文链接）' }}</div>
     </div>
   </div>
 </template>

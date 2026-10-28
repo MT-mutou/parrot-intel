@@ -7,16 +7,31 @@ import { ElMessage } from 'element-plus'
 const http = axios.create({
   baseURL: import.meta.env.VITE_API_BASE || '/api/v1',
   timeout: 120000,
+  withCredentials: true, // 登录会话 cookie 跨域携带（同域场景无副作用）
 })
 
 http.interceptors.response.use(
   (resp) => resp.data,
   (err) => {
     const msg = err.response?.data?.error || err.message || '请求失败'
-    ElMessage.error(msg)
+    // 会话失效：跳转登录页（避免在登录页本身循环）
+    if (err.response?.status === 401 && !location.pathname.startsWith('/login')) {
+      ElMessage.warning('会话已过期，请重新登录')
+      location.href = '/login'
+    } else {
+      ElMessage.error(msg)
+    }
     return Promise.reject(new Error(msg))
   }
 )
+
+// ---- 认证 ----
+export const authApi = {
+  login: (username, password) => http.post('/auth/login', { username, password }),
+  logout: () => http.post('/auth/logout'),
+  me: () => http.get('/auth/me'),
+  changePassword: (old_password, new_password) => http.post('/auth/change-password', { old_password, new_password }),
+}
 
 // ---- API 封装（与 Go 后端契约一一对应）----
 

@@ -132,7 +132,8 @@ func (c *Collector) run() {
 // fetchSource 抓取单个 RSS 源，返回新增文章数
 func (c *Collector) fetchSource(s db.Source) (int, error) {
 	fp := gofeed.NewParser()
-	fp.UserAgent = "ParrotIntel/1.0 (+security-intel)"
+	// 浏览器 UA：部分安全站点（FreeBuf/Schneier 等）会拦截非浏览器标识的抓取
+	fp.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 ParrotIntel/1.0"
 	fp.Client = &http.Client{Timeout: 25 * time.Second}
 
 	feed, err := fp.ParseURL(s.URL)

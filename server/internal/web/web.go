@@ -14,12 +14,13 @@ import (
 	"time"
 
 	"parrot-intel/internal/ai"
+	"parrot-intel/internal/auth"
 	"parrot-intel/internal/collector"
 	"parrot-intel/internal/db"
 )
 
 // Version 服务版本号（/api/v1/health 与根路径返回）
-const Version = "2.1.0"
+const Version = "2.2.0"
 
 // Server API 服务
 type Server struct {
@@ -28,11 +29,12 @@ type Server struct {
 	Log  *log.Logger
 	AI   func() *ai.Client // 每次调用实时读取设置（改配置无需重启）
 	CORS string            // 允许的前端来源，逗号分隔；"*" 表示全部
+	Auth *auth.Manager     // 登录会话管理
 }
 
 // New 构造
-func New(d *db.DB, c *collector.Collector, aiFn func() *ai.Client, lg *log.Logger, cors string) *Server {
-	return &Server{DB: d, Col: c, Log: lg, AI: aiFn, CORS: cors}
+func New(d *db.DB, c *collector.Collector, aiFn func() *ai.Client, lg *log.Logger, cors string, am *auth.Manager) *Server {
+	return &Server{DB: d, Col: c, Log: lg, AI: aiFn, CORS: cors, Auth: am}
 }
 
 // Handler 路由总入口（Go 1.22+ 方法路由）
@@ -42,6 +44,12 @@ func (s *Server) Handler() http.Handler {
 	// ---- 服务信息与健康检查 ----
 	mux.HandleFunc("GET /{$}", s.apiRoot)
 	mux.HandleFunc("GET /api/v1/health", s.apiHealth)
+
+	// ---- 登录认证（login 免鉴权，其余在中间件放行清单内）----
+	mux.HandleFunc("POST /api/v1/auth/login", s.apiLogin)
+	mux.HandleFunc("POST /api/v1/auth/logout", s.apiLogout)
+	mux.HandleFunc("GET /api/v1/auth/me", s.apiMe)
+	mux.HandleFunc("POST /api/v1/auth/change-password", s.apiChangePassword)
 
 	// ---- RESTful API v1 ----
 	mux.HandleFunc("GET /api/v1/overview", s.apiOverview)
@@ -74,7 +82,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/channels/{id}", s.apiDeleteChannel)
 	mux.HandleFunc("POST /api/v1/channels/{id}/test", s.apiTestChannel)
 
-	return corsMiddleware(s.CORS, gzipMiddleware(mux))
+	return corsMiddleware(s.CORS, gzipMiddleware(s.authMiddleware(mux)))
 }
 
 // apiRoot 服务信息

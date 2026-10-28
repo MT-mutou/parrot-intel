@@ -8,6 +8,12 @@ import App from './App.vue'
 import router from './router'
 import './styles/theme.css'
 
+// 主题初始化：默认暗色，用户选择持久化在 localStorage
+const saved = localStorage.getItem('parrot-theme')
+const theme = saved === 'light' || saved === 'dark' ? saved : 'dark'
+document.documentElement.classList.remove('light', 'dark')
+document.documentElement.classList.add(theme)
+
 const app = createApp(App)
 app.use(createPinia())
 app.use(router)

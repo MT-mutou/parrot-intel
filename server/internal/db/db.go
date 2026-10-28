@@ -649,37 +649,35 @@ func (d *DB) SeedDefaults() {
 		return
 	}
 	defaults := []Source{
-		// === 国内安全媒体 ===
+		// === 国内安全媒体（2026-10 逐源实测可用）===
 		{Name: "FreeBuf", URL: "https://www.freebuf.com/feed", Category: strPtr("安全媒体")},
-		{Name: "安全客", URL: "https://www.anquanke.com/rss", Category: strPtr("安全媒体")},
-		{Name: "安全牛", URL: "https://www.aqniu.com/feed", Category: strPtr("安全媒体")},
+		{Name: "安全客", URL: "https://api.anquanke.com/data/v1/rss", Category: strPtr("安全媒体")},
 		{Name: "嘶吼", URL: "https://www.4hou.com/feed", Category: strPtr("安全媒体")},
-		{Name: "安全内参", URL: "https://www.secrss.com/feeds", Category: strPtr("安全媒体")},
 		{Name: "安全脉搏", URL: "https://www.secpulse.com/feed", Category: strPtr("安全媒体")},
-		{Name: "跳跳糖社区", URL: "https://tttang.com/rss", Category: strPtr("安全媒体")},
-		{Name: "先知社区", URL: "https://xz.aliyun.com/feed", Category: strPtr("安全媒体")},
-		{Name: "数世咨询", URL: "https://www.dwcon.cn/feed", Category: strPtr("安全媒体")},
-		{Name: "中国信息安全", URL: "https://www.chinainfosec.com/feed", Category: strPtr("安全媒体")},
-		// === 国内技术研究 ===
+
+		// === 技术研究 ===
+		{Name: "先知社区", URL: "https://xz.aliyun.com/feed", Category: strPtr("技术研究")},
 		{Name: "Seebug Paper", URL: "https://paper.seebug.org/rss/", Category: strPtr("技术研究")},
-		{Name: "看雪学苑", URL: "https://www.kanxue.com/rss.xml", Category: strPtr("技术研究")},
-		{Name: "X安全", URL: "https://x.threatbook.com/v5/rss", Category: strPtr("技术研究")},
-		// === 国内安全厂商 ===
-		{Name: "奇安信", URL: "https://www.qianxin.com/feed", Category: strPtr("厂商动态")},
-		{Name: "安恒信息", URL: "https://www.dbappsecurity.com.cn/feed", Category: strPtr("厂商动态")},
-		{Name: "深信服", URL: "https://www.sangfor.com.cn/feed", Category: strPtr("厂商动态")},
-		{Name: "绿盟科技", URL: "https://blog.nsfocus.net/feed/", Category: strPtr("厂商动态")},
-		{Name: "360 安全", URL: "https://blogs.360.cn/rss", Category: strPtr("厂商动态")},
-		{Name: "腾讯安全", URL: "https://security.tencent.com/index.php/feed", Category: strPtr("厂商动态")},
-		{Name: "阿里云安全", URL: "https://developer.aliyun.com/group/security/rss", Category: strPtr("厂商动态")},
-		{Name: "华为安全", URL: "https://www.huawei.com/cn/rss/security", Category: strPtr("厂商动态")},
-		// === 国内漏洞通报 ===
-		{Name: "CNVD", URL: "https://www.cnvd.org.cn/rss", Category: strPtr("漏洞通报")},
-		{Name: "CNNVD", URL: "http://www.cnnvd.org.cn/web/rss/rss.xml", Category: strPtr("漏洞通报")},
-		// === 国内政策法规 ===
-		{Name: "网信中国", URL: "http://www.cac.gov.cn/rss.xml", Category: strPtr("政策法规")},
-		{Name: "公安部网安局", URL: "http://www.mps.gov.cn/n2254314/rss.xml", Category: strPtr("政策法规")},
-		// === 国际安全媒体 ===
+		{Name: "腾讯玄武实验室", URL: "https://xlab.tencent.com/cn/atom.xml", Category: strPtr("技术研究")},
+		{Name: "Google Project Zero", URL: "https://googleprojectzero.blogspot.com/feeds/posts/default", Category: strPtr("技术研究")},
+		{Name: "KitPloit", URL: "https://www.kitploit.com/feeds/posts/default", Category: strPtr("技术研究")},
+
+		// === 厂商研究 ===
+		{Name: "绿盟科技", URL: "https://blog.nsfocus.net/feed/", Category: strPtr("厂商研究")},
+		{Name: "微软安全", URL: "https://www.microsoft.com/security/blog/feed/", Category: strPtr("厂商研究")},
+		{Name: "Palo Alto Unit42", URL: "https://unit42.paloaltonetworks.com/feed/", Category: strPtr("厂商研究")},
+		{Name: "Cisco Talos", URL: "https://blog.talosintelligence.com/rss/", Category: strPtr("厂商研究")},
+		{Name: "卡巴斯基 Securelist", URL: "https://securelist.com/feed/", Category: strPtr("厂商研究")},
+		{Name: "Check Point", URL: "https://blog.checkpoint.com/feed/", Category: strPtr("厂商研究")},
+		{Name: "ESET WeLiveSecurity", URL: "https://www.welivesecurity.com/feed/", Category: strPtr("厂商研究")},
+		{Name: "Malwarebytes", URL: "https://www.malwarebytes.com/blog/feed", Category: strPtr("厂商研究")},
+
+		// === 漏洞通报 ===
+		{Name: "CISA 新闻", URL: "https://www.cisa.gov/news.xml", Category: strPtr("漏洞通报")},
+		{Name: "CISA 安全通告", URL: "https://www.cisa.gov/cybersecurity-advisories/all.xml", Category: strPtr("漏洞通报")},
+		{Name: "英国 NCSC", URL: "https://www.ncsc.gov.uk/api/1/services/v1/report-rss-feed.xml", Category: strPtr("漏洞通报")},
+
+		// === 国际媒体 ===
 		{Name: "The Hacker News", URL: "https://feeds.feedburner.com/TheHackersNews", Category: strPtr("国际媒体")},
 		{Name: "BleepingComputer", URL: "https://www.bleepingcomputer.com/feed/", Category: strPtr("国际媒体")},
 		{Name: "SecurityWeek", URL: "https://www.securityweek.com/feed/", Category: strPtr("国际媒体")},
@@ -687,17 +685,23 @@ func (d *DB) SeedDefaults() {
 		{Name: "SANS ISC", URL: "https://isc.sans.edu/rssfeed_full.xml", Category: strPtr("国际媒体")},
 		{Name: "Krebs on Security", URL: "https://krebsonsecurity.com/feed/", Category: strPtr("国际媒体")},
 		{Name: "Schneier on Security", URL: "https://www.schneier.com/blog/atom.xml", Category: strPtr("国际媒体")},
-		{Name: "Ars Technica Security", URL: "https://feeds.arstechnica.com/arstechnica/security", Category: strPtr("国际媒体")},
-		{Name: "ZDNet Security", URL: "https://www.zdnet.com/topic/security/rss.xml", Category: strPtr("国际媒体")},
-		// === 国际漏洞/研究/通报 ===
-		{Name: "CISA Alerts", URL: "https://www.cisa.gov/news.xml", Category: strPtr("国际通报")},
-		{Name: "NVD", URL: "https://nvd.nist.gov/feeds/xml/cve/misc/nvd-rss.xml", Category: strPtr("国际通报")},
-		{Name: "Google Project Zero", URL: "https://googleprojectzero.blogspot.com/feeds/posts/default", Category: strPtr("国际通报")},
-		{Name: "OWASP Blog", URL: "https://owasp.org/feed.xml", Category: strPtr("国际通报")},
-		// === AI 安全/泛科技 ===
-		{Name: "机器之心", URL: "https://www.jiqizhixin.com/rss", Category: strPtr("AI 安全")},
+		{Name: "Ars Technica Security", URL: "https://arstechnica.com/security/feed/", Category: strPtr("国际媒体")},
+		{Name: "The Record", URL: "https://therecord.media/feed", Category: strPtr("国际媒体")},
+		{Name: "Security Affairs", URL: "https://securityaffairs.com/feed/", Category: strPtr("国际媒体")},
+		{Name: "The DFIR Report", URL: "https://thedfirreport.com/feed/", Category: strPtr("国际媒体")},
+		{Name: "Help Net Security", URL: "https://www.helpnetsecurity.com/feed/", Category: strPtr("国际媒体")},
+		{Name: "CSO Online", URL: "https://www.csoonline.com/feed/", Category: strPtr("国际媒体")},
+		{Name: "Graham Cluley", URL: "https://grahamcluley.com/feed/", Category: strPtr("国际媒体")},
+		{Name: "Wired Security", URL: "https://www.wired.com/feed/rss", Category: strPtr("国际媒体")},
+		{Name: "Troy Hunt", URL: "https://www.troyhunt.com/rss/", Category: strPtr("国际媒体")},
+		{Name: "TechCrunch Security", URL: "https://techcrunch.com/category/security/feed/", Category: strPtr("国际媒体")},
+		{Name: "TorrentFreak", URL: "https://torrentfreak.com/feed/", Category: strPtr("国际媒体")},
+		{Name: "Infosecurity Magazine", URL: "https://www.infosecurity-magazine.com/rss/news/", Category: strPtr("国际媒体")},
+
+		// === AI 安全 ===
 		{Name: "量子位", URL: "https://www.qbitai.com/feed", Category: strPtr("AI 安全")},
 	}
+
 	for _, s := range defaults {
 		d.AddSource(s.Name, s.URL, deref(s.Category))
 	}

@@ -50,7 +50,7 @@
         <el-table-column label="占比" min-width="200">
           <template #default="{ row }">
             <el-progress :percentage="Math.round(row.count / (stats.total || 1) * 100)"
-                         :stroke-width="8" color="#38bdf8" />
+                         :stroke-width="8" :color="accentColor" />
           </template>
         </el-table-column>
       </el-table>
@@ -73,6 +73,7 @@ const stats = reactive({ total: 0, today: 0, unread: 0, starred: 0, high_threat:
 const topSources = ref([])
 const trendRef = ref(), threatRef = ref(), catRef = ref()
 let charts = []
+const accentColor = ref(document.documentElement.classList.contains('light') ? '#0284c7' : '#38bdf8')
 
 const metrics = [
   { label: '情报总量', icon: '📋', bg: 'rgba(56,189,248,.12)', color: '#38bdf8' },
@@ -98,7 +99,15 @@ async function load() {
 }
 
 function render() {
-  const axis = { axisLine: { lineStyle: { color: '#24354a' } }, axisLabel: { color: '#7b8ba0' }, splitLine: { lineStyle: { color: '#16202e' } } }
+  charts.forEach(c => c.dispose())
+  charts = []
+  // 主题感知：读取当前主题的图表配色
+  const light = document.documentElement.classList.contains('light')
+  const accent = light ? '#0284c7' : '#38bdf8'
+  const axis = light
+    ? { axisLine: { lineStyle: { color: '#c3cfdd' } }, axisLabel: { color: '#5a6b80' }, splitLine: { lineStyle: { color: '#e7edf4' } } }
+    : { axisLine: { lineStyle: { color: '#24354a' } }, axisLabel: { color: '#7b8ba0' }, splitLine: { lineStyle: { color: '#16202e' } } }
+  const labelColor = light ? '#5a6b80' : '#8ea2b8'
   // 趋势
   const trend = echarts.init(trendRef.value)
   trend.setOption({
@@ -109,10 +118,10 @@ function render() {
     series: [{
       type: 'line', smooth: true, symbolSize: 7,
       data: stats.last_7days.map(d => d.count),
-      lineStyle: { color: '#38bdf8', width: 2.5 },
-      itemStyle: { color: '#38bdf8' },
+      lineStyle: { color: accent, width: 2.5 },
+      itemStyle: { color: accent },
       areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-        { offset: 0, color: 'rgba(56,189,248,.28)' }, { offset: 1, color: 'rgba(56,189,248,0)' }
+        { offset: 0, color: light ? 'rgba(2,132,199,.18)' : 'rgba(56,189,248,.28)' }, { offset: 1, color: 'rgba(56,189,248,0)' }
       ]) },
     }],
   })
@@ -120,14 +129,14 @@ function render() {
 
   // 威胁分布（饼）
   const tmap = { high: '高危', medium: '中危', low: '低危', '未评': '未评' }
-  const tcolors = { high: '#ef4444', medium: '#f59e0b', low: '#22c55e', '未评': '#475569' }
+  const tcolors = { high: '#ef4444', medium: '#f59e0b', low: '#22c55e', '未评': light ? '#8494a7' : '#475569' }
   const threat = echarts.init(threatRef.value)
   threat.setOption({
     tooltip: { trigger: 'item' },
     series: [{
       type: 'pie', radius: ['52%', '78%'], center: ['50%', '50%'],
-      label: { color: '#8ea2b8', fontSize: 11, formatter: '{b} {c}' },
-      data: (stats.by_threat || []).map(t => ({ name: tmap[t.category] || t.category, value: t.count, itemStyle: { color: tcolors[t.category] || '#475569' } })),
+      label: { color: labelColor, fontSize: 11, formatter: '{b} {c}' },
+      data: (stats.by_threat || []).map(t => ({ name: tmap[t.category] || t.category, value: t.count, itemStyle: { color: tcolors[t.category] || (light ? '#8494a7' : '#475569') } })),
     }],
   })
   charts.push(threat)
@@ -144,7 +153,7 @@ function render() {
       type: 'bar', barWidth: 10,
       data: cats.map(c => c.count).reverse(),
       itemStyle: { color: '#818cf8', borderRadius: [0, 5, 5, 0] },
-      label: { show: true, position: 'right', color: '#7b8ba0', fontSize: 11 },
+      label: { show: true, position: 'right', color: labelColor, fontSize: 11 },
     }],
   })
   charts.push(cat)
@@ -153,6 +162,11 @@ function render() {
 onMounted(async () => {
   await load()
   window.addEventListener('resize', resize)
+  // 主题切换时重绘图表
+  window.addEventListener('theme-change', () => {
+    accentColor.value = document.documentElement.classList.contains('light') ? '#0284c7' : '#38bdf8'
+    render()
+  })
 })
 function resize() { charts.forEach(c => c.resize()) }
 </script>

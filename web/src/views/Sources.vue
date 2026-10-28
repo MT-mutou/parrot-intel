@@ -12,12 +12,12 @@
 
     <!-- 分类分组 -->
     <div v-for="(list, cat) in grouped" :key="cat" style="margin-bottom: 18px;">
-      <div style="font-weight: 600; color: #8ea2b8; margin-bottom: 8px; font-size: 13px;">{{ cat }}（{{ list.length }}）</div>
+      <div style="font-weight: 600; color: var(--p-text-2); margin-bottom: 8px; font-size: 13px;">{{ cat }}（{{ list.length }}）</div>
       <el-table :data="list" size="small" class="panel">
         <el-table-column prop="name" label="名称" width="180" />
         <el-table-column prop="url" label="RSS 地址" min-width="300" show-overflow-tooltip>
           <template #default="{ row }">
-            <span class="mono" style="font-size: 12px; color: #64748b;">{{ row.url }}</span>
+            <span class="mono" style="font-size: 12px; color: var(--p-text-3);">{{ row.url }}</span>
           </template>
         </el-table-column>
         <el-table-column label="最近抓取" width="170">

@@ -1,7 +1,7 @@
 # 鹦鹉情报站 ParrotIntel —— 构建/发布编排
 # Windows 无 make 时直接用 scripts/release.sh（功能等同 release 目标）
 
-VER ?= 2.1.0
+VER ?= 2.2.0
 
 .PHONY: help dev-server dev-web build-server build-web build release clean
 

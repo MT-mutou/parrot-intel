@@ -36,7 +36,7 @@
                shadow="never" style="margin-bottom: 12px" @click="$router.push('/article/' + a.id)">
         <div style="display: flex; justify-content: space-between; gap: 12px; align-items: flex-start;">
           <div class="title">
-            <span v-if="!a.is_read" style="color: #38bdf8; margin-right: 4px;">●</span>{{ a.title }}
+            <span v-if="!a.is_read" style="color: var(--p-accent); margin-right: 4px;">●</span>{{ a.title }}
           </div>
           <span v-if="a.threat_level" class="threat-tag" :class="'threat-' + a.threat_level">{{ threatLabel(a.threat_level) }}</span>
         </div>
@@ -50,7 +50,7 @@
                 class="mono" style="color: #fb923c;">{{ cve }}</span>
           <div style="flex: 1"></div>
           <el-icon v-if="a.is_starred" color="#facc15" :size="16"><Star /></el-icon>
-          <el-icon color="#64748b" :size="15"><View /></el-icon>
+          <el-icon color="var(--p-text-3)" :size="15"><View /></el-icon>
         </div>
       </el-card>
     </div>

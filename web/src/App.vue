@@ -1,5 +1,8 @@
 <template>
-  <div style="display: flex; height: 100vh; overflow: hidden;">
+  <!-- 登录页：独立全屏布局 -->
+  <router-view v-if="isLoginRoute" />
+
+  <div v-else style="display: flex; height: 100vh; overflow: hidden;">
     <!-- 侧边栏 -->
     <aside class="sidebar">
       <div class="brand" style="padding: 6px 14px 16px;">
@@ -15,8 +18,12 @@
         <span>{{ item.label }}</span>
       </div>
       <div style="flex: 1"></div>
-      <div class="nav-item" style="color: #475569; font-size: 12px; cursor: default;">
-        <span>v2.0 · Go</span>
+      <div class="nav-item" @click="logout" style="color: var(--p-text-3);">
+        <el-icon><SwitchButton /></el-icon>
+        <span>退出登录</span>
+      </div>
+      <div class="nav-item" style="color: var(--p-text-3); font-size: 12px; cursor: default;">
+        <span>v2.2 · Go + Vue3</span>
       </div>
     </aside>
 
@@ -24,6 +31,13 @@
       <!-- 顶栏 -->
       <header class="topbar">
         <div style="flex: 1"></div>
+
+        <!-- 主题切换 -->
+        <el-tooltip :content="isLight ? '切换到夜间模式' : '切换到白天模式'" placement="bottom">
+          <el-button circle @click="toggleTheme">
+            <el-icon><Sunny v-if="isLight" /><Moon v-else /></el-icon>
+          </el-button>
+        </el-tooltip>
 
         <!-- 搜索（跳转情报流） -->
         <el-input v-model="search" placeholder="搜索情报…" style="width: 260px" clearable
@@ -49,10 +63,11 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import api from './api'
+import api, { authApi } from './api'
+import { setAuthed } from './router'
 
 const router = useRouter()
 const route = useRoute()
@@ -70,6 +85,18 @@ const search = ref('')
 const col = reactive({ running: false, status: '' })
 let timer = null
 
+const isLoginRoute = computed(() => route.path === '/login')
+const isLight = ref(document.documentElement.classList.contains('light'))
+
+function toggleTheme() {
+  const next = isLight.value ? 'dark' : 'light'
+  document.documentElement.classList.remove('light', 'dark')
+  document.documentElement.classList.add(next)
+  localStorage.setItem('parrot-theme', next)
+  isLight.value = next === 'light'
+  window.dispatchEvent(new Event('theme-change'))
+}
+
 function isActive(p) {
   if (p === '/') return route.path === '/'
   return route.path.startsWith(p)
@@ -77,6 +104,13 @@ function isActive(p) {
 
 function goSearch() {
   router.push({ path: '/intel', query: search.value ? { search: search.value } : {} })
+}
+
+async function logout() {
+  try { await authApi.logout() } catch { /* 忽略 */ }
+  setAuthed(false)
+  ElMessage.success('已退出登录')
+  router.push('/login')
 }
 
 async function collect() {

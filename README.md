@@ -63,13 +63,17 @@ parrot-intel/
 
 ## 功能
 
-- **情报收集**：40+ 国内外安全源（8 大分类）并发抓取，自动去重，来源健康状态监控，每日定时收集（时间可配）
-- **AI 分析**（可选，OpenAI 兼容：DeepSeek / 通义 / Kimi / OpenAI）：每篇情报自动生成中文摘要、威胁评级（高/中/低）、分类标签、CVE 提取、💬「说人话」通俗解读；配置保存即时生效
+- **登录安全**：系统登录（默认账号 `yingwu` / 密码 `yingwu`，**首次登录强制修改密码**），bcrypt 哈希存储 + 会话 Cookie + 全 API 鉴权；修改密码后自动踢掉其他端
+- **情报收集**：40 个**逐源实测可用**的国内外安全源（安全媒体 / 技术研究 / 厂商研究 / 漏洞通报 / 国际媒体 / AI 安全 6 大分类）并发抓取，自动去重，来源健康状态监控，每日定时收集（时间可配）
+- **AI 分析**（可选，OpenAI 兼容）：**DeepSeek / 通义千问 / Kimi / OpenAI 四家预设最新模型**（deepseek-chat、qwen-max-latest、kimi-latest、gpt-5 等，支持自定义模型）；每篇情报自动生成中文摘要、威胁评级（高/中/低）、分类标签、CVE 提取、💬「说人话」通俗解读；配置保存即时生效
+- **白天/夜间双主题**：顶栏一键切换 ☀️/🌙，偏好持久化，仪表盘图表随主题重绘
 - **每日简报**：AI 汇总当日情报生成管理层简报，历史简报按日回看
 - **一键推送**：钉钉 / 企业微信 / 飞书 / 微信（Server酱）四渠道，卡片式管理、逐渠道测试、单渠道或全渠道推送；收集完成后可自动推送
 - **态势总览**：关键指标卡、近 7 日趋势、威胁等级分布、分类分布、来源 TOP（ECharts）
 - **情报流**：多维筛选（分类/威胁等级/未读/收藏）+ 搜索 + 分页，CVE 高亮，收藏/已读
 - **来源管理**：增删启停、失败原因展示、40 源预置
+
+> 情报源说明：默认 40 源均于 2026-10 逐源抓取验证（安全客已换用其 API 地址、Ars Technica / Wired 已更新为新地址，并新增腾讯玄武实验室、Unit42、Talos、Securelist、Check Point、ESET、微软安全、The Record、DFIR Report 等）。个别国际源对高频访问有临时限流，失败会在来源管理页显示，稍后自动恢复。
 
 ## 本地开发
 
@@ -90,7 +94,7 @@ cd web && npm run build && API_PROXY_TARGET=http://127.0.0.1:8080 npm run previe
 
 ```bash
 # 服务器上执行（需已安装 Nginx）：
-curl -L -o /tmp/parrot-intel.tar.gz https://github.com/MT-mutou/parrot-intel/releases/download/v2.1.0/parrot-intel-v2.1.0.tar.gz
+curl -L -o /tmp/parrot-intel.tar.gz https://github.com/MT-mutou/parrot-intel/releases/download/v2.2.0/parrot-intel-v2.2.0.tar.gz
 mkdir -p /opt/parrot-intel-release
 tar -xzf /tmp/parrot-intel.tar.gz -C /opt/parrot-intel-release --strip-components=1
 cd /opt/parrot-intel-release && sudo bash deploy/deploy.sh
@@ -104,17 +108,17 @@ cd /opt/parrot-intel-release && sudo bash deploy/deploy.sh
 
 ```bash
 bash scripts/release.sh        # 或 make release
-# → release/parrot-intel-v2.1.0.tar.gz（前端产物 + linux/amd64 后端 + 部署配置）
+# → release/parrot-intel-v2.2.0.tar.gz（前端产物 + linux/amd64 后端 + 部署配置）
 ```
 
 #### ② 上传并一键部署（服务器需已安装 Nginx）
 
 ```bash
-scp release/parrot-intel-v2.1.0.tar.gz root@服务器IP:/tmp/
+scp release/parrot-intel-v2.2.0.tar.gz root@服务器IP:/tmp/
 
 # 服务器上：
 mkdir -p /opt/parrot-intel-release
-tar -xzf /tmp/parrot-intel-v2.1.0.tar.gz -C /opt/parrot-intel-release --strip-components=1
+tar -xzf /tmp/parrot-intel-v2.2.0.tar.gz -C /opt/parrot-intel-release --strip-components=1
 cd /opt/parrot-intel-release
 sudo bash deploy/deploy.sh
 ```
@@ -122,6 +126,8 @@ sudo bash deploy/deploy.sh
 `deploy.sh` 自动完成：安装后端到 `/opt/parrot-intel` → 发布前端到 `/var/www/parrot-intel` → 安装并启动 systemd 服务（守护 + 开机自启 + 健康检查）→ 安装 Nginx 站点配置（静态托管 + `/api` 反代 + gzip）。
 
 完成后访问 `http://服务器IP/`（80 端口）。升级 = 重复上述三步（数据目录不受影响）。
+
+**首次登录**：默认账号 `yingwu`、密码 `yingwu`，登录后系统强制要求修改密码。密码哈希存于 `data/cybersec.db`，忘记密码时删除该库中 `settings` 表的 `admin_pass_hash` 行即可恢复默认（会同时重置全部数据以外的设置）。
 
 ### 数据备份（建议）
 

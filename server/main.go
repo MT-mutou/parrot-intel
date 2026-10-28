@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"parrot-intel/internal/ai"
+	"parrot-intel/internal/auth"
 	"parrot-intel/internal/collector"
 	"parrot-intel/internal/db"
 	"parrot-intel/internal/notify"
@@ -33,6 +34,21 @@ func main() {
 		log.Fatalf("打开数据库失败: %v", err)
 	}
 	database.SeedDefaults()
+
+	// 登录账号初始化：默认 yingwu / yingwu，首次登录强制修改密码
+	am := auth.NewManager()
+	if database.GetSetting("admin_user", "") == "" {
+		database.SetSetting("admin_user", "yingwu")
+	}
+	if database.GetSetting("admin_pass_hash", "") == "" {
+		if h, err := auth.HashPassword("yingwu"); err == nil {
+			database.SetSetting("admin_pass_hash", h)
+			database.SetSetting("force_change_pwd", "true")
+		}
+	}
+	if database.GetSetting("force_change_pwd", "") == "" {
+		database.SetSetting("force_change_pwd", "true")
+	}
 
 	// AI 客户端工厂：每次调用实时读取设置（改配置无需重启）
 	aiFn := func() *ai.Client {
@@ -58,7 +74,7 @@ func main() {
 		go autoBriefing(database, aiFn, lg)
 	}
 
-	srv := web.New(database, col, aiFn, lg, *cors)
+	srv := web.New(database, col, aiFn, lg, *cors, am)
 
 	// 定时收集：每分钟检查是否到达设定小时
 	go func() {
