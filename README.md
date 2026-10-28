@@ -94,7 +94,7 @@ cd web && npm run build && API_PROXY_TARGET=http://127.0.0.1:8080 npm run previe
 
 ```bash
 # 服务器上执行（需已安装 Nginx）：
-curl -L -o /tmp/parrot-intel.tar.gz https://github.com/MT-mutou/parrot-intel/releases/download/v2.2.0/parrot-intel-v2.2.0.tar.gz
+curl -L -o /tmp/parrot-intel.tar.gz https://github.com/MT-mutou/parrot-intel/releases/download/v2.2.1/parrot-intel-v2.2.1.tar.gz
 mkdir -p /opt/parrot-intel-release
 tar -xzf /tmp/parrot-intel.tar.gz -C /opt/parrot-intel-release --strip-components=1
 cd /opt/parrot-intel-release && sudo bash deploy/deploy.sh

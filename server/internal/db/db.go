@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -380,15 +381,18 @@ func (d *DB) ListArticles(f ListFilter) ([]Article, int, error) {
 // GetArticle 详情（含全文）
 func (d *DB) GetArticle(id string) (*ArticleDetail, error) {
 	var ad ArticleDetail
-	var tags, cves sql.NullString
+	var tags, cves, content, collectedAt sql.NullString
 	err := d.sql.QueryRow(
 		`SELECT id, title, url, source_name, source_url, summary, category, threat_level, region, tags, cve_ids, plain_explanation, published_at, is_read, is_starred, ai_analyzed, content, collected_at FROM articles WHERE id = ?`, id).
 		Scan(&ad.ID, &ad.Title, &ad.URL, &ad.SourceName, &ad.SourceURL, &ad.Summary,
 			&ad.Category, &ad.ThreatLevel, &ad.Region, &tags, &cves, &ad.PlainExplanation,
-			&ad.PublishedAt, &ad.IsRead, &ad.IsStarred, &ad.AIAnalyzed, &ad.Content, &ad.CollectedAt)
+			&ad.PublishedAt, &ad.IsRead, &ad.IsStarred, &ad.AIAnalyzed, &content, &collectedAt)
 	if err != nil {
 		return nil, err
 	}
+	// content / collected_at 可能为 NULL（RSS 无正文的文章），不能直接扫进 string
+	ad.Content = content.String
+	ad.CollectedAt = collectedAt.String
 	ad.Tags = parseJSONArr(tags)
 	ad.CVEIDs = parseJSONArr(cves)
 	return &ad, nil
@@ -433,12 +437,14 @@ func (d *DB) Unanalyzed(limit int) ([]ArticleDetail, error) {
 	list := []ArticleDetail{}
 	for rows.Next() {
 		var ad ArticleDetail
-		var tags, cves sql.NullString
+		var tags, cves, content, collectedAt sql.NullString
 		if err := rows.Scan(&ad.ID, &ad.Title, &ad.URL, &ad.SourceName, &ad.SourceURL, &ad.Summary,
 			&ad.Category, &ad.ThreatLevel, &ad.Region, &tags, &cves, &ad.PlainExplanation,
-			&ad.PublishedAt, &ad.IsRead, &ad.IsStarred, &ad.AIAnalyzed, &ad.Content, &ad.CollectedAt); err != nil {
+			&ad.PublishedAt, &ad.IsRead, &ad.IsStarred, &ad.AIAnalyzed, &content, &collectedAt); err != nil {
 			return nil, err
 		}
+		ad.Content = content.String
+		ad.CollectedAt = collectedAt.String
 		ad.Tags = parseJSONArr(tags)
 		ad.CVEIDs = parseJSONArr(cves)
 		list = append(list, ad)
@@ -641,13 +647,10 @@ func (d *DB) UpdateSourceHealth(id int64, status string, errMsg string) {
 		time.Now().Format(time.RFC3339), status, nullIfEmpty(errMsg), id)
 }
 
-// SeedDefaults 首次运行写入默认安全源（40+ 国内外信息源）
+// SeedDefaults 写入/同步默认安全源（40+ 国内外信息源）
+// 每次启动都执行同步：已存在的同名源更新为最新验证过的 URL（旧库升级时自动修复失效地址），
+// 不存在的新增；用户自建源与启停状态不受影响。
 func (d *DB) SeedDefaults() {
-	var n int
-	d.sql.QueryRow(`SELECT COUNT(*) FROM sources`).Scan(&n)
-	if n > 0 {
-		return
-	}
 	defaults := []Source{
 		// === 国内安全媒体（2026-10 逐源实测可用）===
 		{Name: "FreeBuf", URL: "https://www.freebuf.com/feed", Category: strPtr("安全媒体")},
@@ -702,8 +705,30 @@ func (d *DB) SeedDefaults() {
 		{Name: "量子位", URL: "https://www.qbitai.com/feed", Category: strPtr("AI 安全")},
 	}
 
+	names := make([]string, 0, len(defaults))
 	for _, s := range defaults {
-		d.AddSource(s.Name, s.URL, deref(s.Category))
+		cat := deref(s.Category)
+		// 同名源 → 更新为最新 URL/分类（修复旧版本遗留的失效地址）
+		if res, err := d.sql.Exec(`UPDATE sources SET url=?, category=? WHERE name=?`,
+			s.URL, nullIfEmpty(cat), s.Name); err == nil {
+			if n, _ := res.RowsAffected(); n == 0 {
+				d.sql.Exec(`INSERT OR IGNORE INTO sources (name, url, category) VALUES (?, ?, ?)`,
+					s.Name, s.URL, nullIfEmpty(cat))
+			}
+		}
+		names = append(names, s.Name)
+	}
+
+	// 一次性迁移（v2.2.1）：旧版本遗留在库、且最近一次抓取失败的非默认源，自动停用
+	// （不停用、不删除默认源；用户可在「来源管理」中手动删除这些停用项）
+	if d.GetSetting("seed_migration_v221", "") == "" {
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(names)), ",")
+		args := make([]any, len(names))
+		for i, n := range names {
+			args[i] = n
+		}
+		d.sql.Exec(`UPDATE sources SET enabled=0 WHERE last_status='error' AND name NOT IN (`+ph+`)`, args...)
+		d.SetSetting("seed_migration_v221", time.Now().Format(time.RFC3339))
 	}
 }
 
