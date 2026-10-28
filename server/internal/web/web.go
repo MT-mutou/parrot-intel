@@ -20,7 +20,7 @@ import (
 )
 
 // Version 服务版本号（/api/v1/health 与根路径返回）
-const Version = "2.2.2"
+const Version = "2.2.3"
 
 // Server API 服务
 type Server struct {
@@ -163,11 +163,23 @@ type gzipWriter struct {
 	once sync.Once
 }
 
-func (g *gzipWriter) Write(b []byte) (int, error) {
+// mark 确保在响应头实际发出前就声明 Content-Encoding。
+// 关键：writeErr 会先 WriteHeader(code) 再写体；若 Content-Encoding
+// 在第一次 Write 才补设，头部已定型，客户端会收到「gzip 体 + 无编码头」的乱码。
+func (g *gzipWriter) mark() {
 	g.once.Do(func() {
 		g.Header().Set("Content-Encoding", "gzip")
 		g.Header().Del("Content-Length")
 	})
+}
+
+func (g *gzipWriter) WriteHeader(code int) {
+	g.mark()
+	g.ResponseWriter.WriteHeader(code)
+}
+
+func (g *gzipWriter) Write(b []byte) (int, error) {
+	g.mark()
 	return g.gz.Write(b)
 }
 
