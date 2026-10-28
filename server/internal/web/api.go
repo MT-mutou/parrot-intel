@@ -4,7 +4,6 @@ package web
 import (
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -15,16 +14,6 @@ import (
 	"parrot-intel/internal/db"
 	"parrot-intel/internal/notify"
 )
-
-// fsSub dist 子文件系统
-func fsSub() (fs.FS, error) {
-	return fs.Sub(distFS, "dist")
-}
-
-// fsReadFile 从 embed dist 读文件
-func fsReadFile(name string) ([]byte, error) {
-	return distFS.ReadFile("dist/" + name)
-}
 
 // ---------- overview / stats ----------
 

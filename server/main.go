@@ -1,6 +1,8 @@
-// 鹦鹉情报站 ParrotIntel —— 单二进制威胁情报聚合平台（Vue3 前端 + Go API）
+// 鹦鹉情报站 ParrotIntel —— 威胁情报聚合平台 API 服务（后端）
 //
-// 用法：parrot-intel [-addr :8080] [-data ./data]
+// 前端为独立 Vue3 工程（../web），由 Nginx 部署并通过 /api 反代访问本服务。
+//
+// 用法：parrot-intel-server [-addr :8080] [-data ./data] [-cors *]
 package main
 
 import (
@@ -21,6 +23,7 @@ import (
 func main() {
 	addr := flag.String("addr", ":8080", "监听地址")
 	dataDir := flag.String("data", "data", "数据目录（SQLite）")
+	cors := flag.String("cors", "*", "允许的前端来源（CORS），逗号分隔，* 表示全部")
 	flag.Parse()
 
 	lg := log.New(os.Stdout, "", log.LstdFlags)
@@ -55,7 +58,7 @@ func main() {
 		go autoBriefing(database, aiFn, lg)
 	}
 
-	srv := web.New(database, col, aiFn, lg)
+	srv := web.New(database, col, aiFn, lg, *cors)
 
 	// 定时收集：每分钟检查是否到达设定小时
 	go func() {
@@ -77,7 +80,7 @@ func main() {
 		}
 	}()
 
-	lg.Printf("鹦鹉情报站启动: http://0.0.0.0%s （数据目录 %s）", *addr, *dataDir)
+	lg.Printf("鹦鹉情报站 API 服务启动: http://0.0.0.0%s （数据目录 %s，CORS %s）", *addr, *dataDir, *cors)
 	server := &http.Server{
 		Addr:              *addr,
 		Handler:           srv.Handler(),

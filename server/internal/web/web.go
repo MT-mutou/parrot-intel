@@ -1,40 +1,47 @@
-// Package web 提供 HTTP 服务：Vue3 SPA（go:embed）+ RESTful API v1。
+// Package web 提供 RESTful API v1 纯后端服务。
+// 前端（web/ 目录的 Vue3 工程）独立构建、由 Nginx 独立部署，
+// 通过反向代理 /api 访问本服务；也支持跨域直连（CORS 可配置）。
 package web
 
 import (
 	"compress/gzip"
-	"embed"
 	"encoding/json"
 	"io"
 	"log"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"parrot-intel/internal/ai"
 	"parrot-intel/internal/collector"
 	"parrot-intel/internal/db"
 )
 
-//go:embed all:dist
-var distFS embed.FS
+// Version 服务版本号（/api/v1/health 与根路径返回）
+const Version = "2.1.0"
 
-// Server Web 服务
+// Server API 服务
 type Server struct {
-	DB  *db.DB
-	Col *collector.Collector
-	Log *log.Logger
-	AI  func() *ai.Client // 每次调用实时读取设置（改配置无需重启）
+	DB   *db.DB
+	Col  *collector.Collector
+	Log  *log.Logger
+	AI   func() *ai.Client // 每次调用实时读取设置（改配置无需重启）
+	CORS string            // 允许的前端来源，逗号分隔；"*" 表示全部
 }
 
 // New 构造
-func New(d *db.DB, c *collector.Collector, aiFn func() *ai.Client, lg *log.Logger) *Server {
-	return &Server{DB: d, Col: c, Log: lg, AI: aiFn}
+func New(d *db.DB, c *collector.Collector, aiFn func() *ai.Client, lg *log.Logger, cors string) *Server {
+	return &Server{DB: d, Col: c, Log: lg, AI: aiFn, CORS: cors}
 }
 
 // Handler 路由总入口（Go 1.22+ 方法路由）
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+
+	// ---- 服务信息与健康检查 ----
+	mux.HandleFunc("GET /{$}", s.apiRoot)
+	mux.HandleFunc("GET /api/v1/health", s.apiHealth)
 
 	// ---- RESTful API v1 ----
 	mux.HandleFunc("GET /api/v1/overview", s.apiOverview)
@@ -67,36 +74,25 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/channels/{id}", s.apiDeleteChannel)
 	mux.HandleFunc("POST /api/v1/channels/{id}/test", s.apiTestChannel)
 
-	// ---- SPA 静态资源（go:embed dist）----
-	mux.Handle("/", s.spaHandler())
-
-	return gzipMiddleware(mux)
+	return corsMiddleware(s.CORS, gzipMiddleware(mux))
 }
 
-// spaHandler 服务 Vue 构建产物；未命中的路径回退 index.html（前端路由）
-func (s *Server) spaHandler() http.Handler {
-	sub, err := fsSub()
-	if err != nil {
-		panic("embed dist 目录缺失: " + err.Error())
-	}
-	fileServer := http.FileServer(http.FS(sub))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p := strings.TrimPrefix(r.URL.Path, "/")
-		if p == "" {
-			p = "index.html"
-		}
-		if _, err := sub.Open(p); err != nil {
-			// SPA fallback：前端路由路径回退到 index.html
-			data, _ := fsReadFile("index.html")
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Write(data)
-			return
-		}
-		// 静态资源长缓存（Vite 产物带内容 hash）
-		if strings.HasPrefix(p, "assets/") {
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		}
-		fileServer.ServeHTTP(w, r)
+// apiRoot 服务信息
+func (s *Server) apiRoot(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, map[string]any{
+		"service": "ParrotIntel API",
+		"name":    "鹦鹉情报站",
+		"version": Version,
+		"api":     "/api/v1",
+		"health":  "/api/v1/health",
+	})
+}
+
+// apiHealth 健康检查（负载均衡 / 探活用）
+func (s *Server) apiHealth(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, map[string]any{
+		"status": "ok",
+		"time":   time.Now().Format(time.RFC3339),
 	})
 }
 
@@ -118,18 +114,50 @@ func decodeBody(r *http.Request, v any) error {
 	return json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(v)
 }
 
+// ---------- CORS ----------
+
+// corsMiddleware 跨域支持：前端与 API 分开部署时（不同域名/端口）需要。
+// 同域反向代理（Nginx 同一站点下 /api 反代）场景下无副作用。
+func corsMiddleware(allow string, next http.Handler) http.Handler {
+	allowed := map[string]bool{}
+	for _, o := range strings.Split(allow, ",") {
+		o = strings.TrimSpace(o)
+		if o != "" {
+			allowed[o] = true
+		}
+	}
+	wildcard := allowed["*"]
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" && (wildcard || allowed[origin]) {
+			h := w.Header()
+			h.Set("Access-Control-Allow-Origin", origin)
+			h.Set("Vary", "Origin")
+			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			h.Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			h.Set("Access-Control-Max-Age", "86400")
+		}
+		// 预检请求直接放行
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // ---------- gzip ----------
 
 type gzipWriter struct {
 	http.ResponseWriter
-	gz  *gzip.Writer
+	gz   *gzip.Writer
 	once sync.Once
 }
 
 func (g *gzipWriter) Write(b []byte) (int, error) {
 	g.once.Do(func() {
 		g.Header().Set("Content-Encoding", "gzip")
-		g.Header().Set("Vary", "Accept-Encoding")
 		g.Header().Del("Content-Length")
 	})
 	return g.gz.Write(b)

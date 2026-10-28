@@ -1,7 +1,13 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 
-const http = axios.create({ baseURL: '/api/v1', timeout: 120000 })
+// API 基地址：默认同源 /api/v1（Nginx 同站点反代场景，无需任何配置）；
+// 前端与 API 分开部署（不同域名/端口）时，通过 VITE_API_BASE 环境变量指定完整地址，
+// 如 VITE_API_BASE=https://api.example.com/api/v1（后端已启用 CORS）
+const http = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE || '/api/v1',
+  timeout: 120000,
+})
 
 http.interceptors.response.use(
   (resp) => resp.data,

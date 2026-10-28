@@ -1,0 +1,28 @@
+# 鹦鹉情报站 ParrotIntel —— API 服务 systemd 单元
+# 安装位置：/etc/systemd/system/parrot-intel.service
+# 由 deploy/deploy.sh 自动安装，也可手工安装：
+#   sudo cp parrot-intel.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now parrot-intel
+
+[Unit]
+Description=ParrotIntel API Server (鹦鹉情报站后端)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/parrot-intel
+ExecStart=/opt/parrot-intel/parrot-intel-server -addr 127.0.0.1:8080 -data /opt/parrot-intel/data -cors *
+Restart=always
+RestartSec=5
+# 优雅停止（等待处理中的收集/AI 请求完成）
+KillSignal=SIGTERM
+TimeoutStopSec=30
+# 日志输出到 journald，用 journalctl -u parrot-intel 查看
+StandardOutput=journal
+StandardError=journal
+# 内存保护：泄漏超限时自动重启
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

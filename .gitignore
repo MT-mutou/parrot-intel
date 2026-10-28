@@ -1,6 +1,8 @@
-data/
-*.exe
-parrot-intel-linux-amd64
+server/data/
+server/*.exe
+server/parrot-intel-server
+web/dist/
+web/node_modules/
+release/
 *.db
-webapp/node_modules/
-internal/web/dist/assets/
+.DS_Store
