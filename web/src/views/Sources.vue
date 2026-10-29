@@ -78,7 +78,20 @@
           </div>
         </el-form-item>
         <el-form-item v-if="form.type === 'html'" label="爬虫配置">
+          <div style="display: flex; gap: 8px; width: 100%; margin-bottom: 6px;">
+            <el-button :loading="generating" @click="genCrawlerConfig">AI 生成配置</el-button>
+            <span style="font-size: 12px; color: var(--p-text-3); align-self: center;">
+              填好上方列表页 URL 后点击，AI 自动分析页面结构并生成选择器
+            </span>
+          </div>
           <el-input v-model="form.config" type="textarea" :rows="8" class="mono" :placeholder="htmlConfigExample" />
+          <div v-if="crawlerSamples.length" style="margin-top: 8px; font-size: 12px; line-height: 1.9;">
+            <div style="color: var(--p-accent);">✓ 实测匹配 {{ crawlerMatched }} 条，样例预览：</div>
+            <div v-for="(s, i) in crawlerSamples" :key="i" style="color: var(--p-text-2); word-break: break-all;">
+              {{ i + 1 }}. {{ s.title }}<br>
+              <span style="color: var(--p-text-3); font-size: 11px;">{{ s.link }}</span>
+            </div>
+          </div>
           <div style="font-size: 12px; color: var(--p-text-3); margin-top: 6px; line-height: 1.7;">
             CSS 选择器 JSON：item=列表条目、title/link=条目内的标题与链接（link_attr 默认 href），
             可选 date（发布时间）、summary（摘要）、date_format（Go 时间布局）、base（相对链接基准）。
@@ -107,6 +120,26 @@ import api from '../api'
 const sources = ref([])
 const dialog = ref(false)
 const form = ref({ name: '', url: '', category: '安全媒体', type: 'rss', config: '' })
+
+// AI 生成爬虫配置
+const generating = ref(false)
+const crawlerSamples = ref([])
+const crawlerMatched = ref(0)
+async function genCrawlerConfig() {
+  if (!form.value.url) {
+    ElMessage.warning('请先填写列表页 URL')
+    return
+  }
+  generating.value = true
+  crawlerSamples.value = []
+  try {
+    const r = await api.aiCrawlerConfig({ url: form.value.url })
+    form.value.config = JSON.stringify(r.config, null, 2)
+    crawlerMatched.value = r.matched
+    crawlerSamples.value = r.samples || []
+    ElMessage.success(`AI 已生成配置，实测匹配 ${r.matched} 条`)
+  } finally { generating.value = false }
+}
 
 const htmlConfigExample = `{
   "list_url": "https://example.com/news",
@@ -170,6 +203,8 @@ async function add() {
   ElMessage.success('已添加，可到概览页点「立即收集」验证')
   dialog.value = false
   form.value = { name: '', url: '', category: '安全媒体', type: 'rss', config: '' }
+  crawlerSamples.value = []
+  crawlerMatched.value = 0
   load()
 }
 

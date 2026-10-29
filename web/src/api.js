@@ -66,6 +66,9 @@ export const api = {
   // AI 模型列表（传当前编辑的端点/Key 试连；不传则用已保存配置）
   aiModels: (data) => http.post('/ai/models', data || {}),
 
+  // AI 生成网页爬虫配置（分析 URL 页面结构，返回选择器 + 实测试跑样例）
+  aiCrawlerConfig: (data) => http.post('/ai/crawler-config', data),
+
   // 收集
   triggerCollect: () => http.post('/collect'),
   collectStatus: () => http.get('/collect/status'),

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -472,6 +473,78 @@ func (c *Collector) fetchHTML(s db.Source, client *http.Client) (int, error) {
 		return 0, fmt.Errorf("选择器 %q 未匹配到任何条目，请核对页面结构", cfg.Item)
 	}
 	return n, nil
+}
+
+// ---------- AI 爬虫配置生成辅助（web 层调用）----------
+
+// FetchPageHTML 抓取指定页面 HTML（走收集器统一的代理配置与浏览器 UA）
+func (c *Collector) FetchPageHTML(pageURL string) (string, error) {
+	req, _ := http.NewRequest("GET", pageURL, nil)
+	req.Header.Set("User-Agent", browserUA)
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+// CrawlerSample 配置试跑抓到的样例条目
+type CrawlerSample struct {
+	Title string `json:"title"`
+	Link  string `json:"link"`
+}
+
+// ProbeCrawlerConfig 用给定页面 HTML 试跑爬虫配置选择器，
+// 返回（匹配条数、前几条样例）。与 fetchHTML 的解析逻辑保持一致。
+func ProbeCrawlerConfig(pageHTML, cfgJSON, pageURL string) (int, []CrawlerSample, error) {
+	cfg := htmlConfig{}
+	if err := json.Unmarshal([]byte(cfgJSON), &cfg); err != nil {
+		return 0, nil, fmt.Errorf("配置 JSON 解析失败: %v", err)
+	}
+	if cfg.Item == "" || cfg.Title == "" || cfg.Link == "" {
+		return 0, nil, errors.New("配置缺少 item/title/link 选择器")
+	}
+	if cfg.LinkAttr == "" {
+		cfg.LinkAttr = "href"
+	}
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(pageHTML))
+	if err != nil {
+		return 0, nil, err
+	}
+	base := cfg.Base
+	if base == "" {
+		base = pageURL
+	}
+	baseURL, baseErr := url.Parse(base)
+
+	total := doc.Find(cfg.Item).Length()
+	samples := []CrawlerSample{}
+	doc.Find(cfg.Item).Each(func(_ int, sel *goquery.Selection) {
+		if len(samples) >= 3 {
+			return
+		}
+		title := strings.TrimSpace(sel.Find(cfg.Title).First().Text())
+		link, _ := sel.Find(cfg.Link).First().Attr(cfg.LinkAttr)
+		link = strings.TrimSpace(link)
+		if title == "" || link == "" {
+			return
+		}
+		if !strings.HasPrefix(link, "http://") && !strings.HasPrefix(link, "https://") && baseErr == nil {
+			if lu, err := url.Parse(link); err == nil {
+				link = baseURL.ResolveReference(lu).String()
+			}
+		}
+		samples = append(samples, CrawlerSample{Title: truncate(title, 120), Link: link})
+	})
+	return total, samples, nil
 }
 
 // ---------- 工具函数 ----------

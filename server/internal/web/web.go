@@ -20,7 +20,7 @@ import (
 )
 
 // Version 服务版本号（/api/v1/health 与根路径返回）
-const Version = "2.2.5"
+const Version = "2.2.6"
 
 // Server API 服务
 type Server struct {
@@ -68,6 +68,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/settings", s.apiGetSettings)
 	mux.HandleFunc("POST /api/v1/settings", s.apiSaveSettings)
 	mux.HandleFunc("POST /api/v1/ai/models", s.apiAIModels)
+	mux.HandleFunc("POST /api/v1/ai/crawler-config", s.apiAICrawlerConfig)
 
 	mux.HandleFunc("POST /api/v1/collect", s.apiCollect)
 	mux.HandleFunc("GET /api/v1/collect/status", s.apiCollectStatus)

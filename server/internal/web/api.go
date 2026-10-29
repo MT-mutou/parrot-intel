@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"parrot-intel/internal/ai"
+	"parrot-intel/internal/collector"
 	"parrot-intel/internal/db"
 	"parrot-intel/internal/notify"
 )
@@ -313,6 +314,62 @@ func (s *Server) apiAIModels(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(ids)
 	writeJSON(w, map[string]any{"models": ids, "endpoint": req.Endpoint})
+}
+
+// POST /api/v1/ai/crawler-config {url} —— AI 分析列表页结构，自动生成网页爬虫的 CSS 选择器配置
+// 生成后会用真实页面试跑验证；首次未命中会带失败反馈重试一次。
+func (s *Server) apiAICrawlerConfig(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		URL string `json:"url"`
+	}
+	if err := decodeBody(r, &req); err != nil || strings.TrimSpace(req.URL) == "" {
+		writeErr(w, 400, "请填写列表页 URL")
+		return
+	}
+	pageURL := strings.TrimSpace(req.URL)
+	if !strings.HasPrefix(pageURL, "http://") && !strings.HasPrefix(pageURL, "https://") {
+		writeErr(w, 400, "URL 需以 http:// 或 https:// 开头")
+		return
+	}
+	c := s.AI()
+	if !c.Configured() {
+		writeErr(w, 400, "未配置 AI API Key，请先到「系统设置」配置 AI 分析引擎")
+		return
+	}
+
+	html, err := s.Col.FetchPageHTML(pageURL)
+	if err != nil {
+		writeErr(w, 502, "抓取页面失败："+err.Error())
+		return
+	}
+
+	var cfg *ai.CrawlerConfig
+	var matched int
+	var samples []collector.CrawlerSample
+	feedback := ""
+	for attempt := 0; attempt < 2; attempt++ {
+		cfg, err = c.GenerateCrawlerConfig(pageURL, html, feedback)
+		if err != nil {
+			writeErr(w, 502, "AI 生成配置失败："+err.Error())
+			return
+		}
+		cfgJSON, _ := json.Marshal(cfg)
+		matched, samples, err = collector.ProbeCrawlerConfig(html, string(cfgJSON), pageURL)
+		if err == nil && matched > 0 && len(samples) > 0 {
+			break
+		}
+		feedback = fmt.Sprintf("选择器 %q 在页面中匹配到 %d 个条目（需 >0 且能提取出标题与链接），请更换更稳健的选择器",
+			cfg.Item, matched)
+	}
+	if matched == 0 || len(samples) == 0 {
+		writeErr(w, 502, "AI 生成的选择器未能从页面提取到条目（匹配 "+strconv.Itoa(matched)+" 条），该页面可能是 JS 动态渲染，请手工配置或换用 RSS/API 源")
+		return
+	}
+	writeJSON(w, map[string]any{
+		"config":  cfg,
+		"matched": matched,
+		"samples": samples,
+	})
 }
 
 // ---------- collect ----------
