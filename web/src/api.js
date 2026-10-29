@@ -63,6 +63,9 @@ export const api = {
   getSettings: () => http.get('/settings'),
   saveSettings: (data) => http.post('/settings', data),
 
+  // AI 模型列表（传当前编辑的端点/Key 试连；不传则用已保存配置）
+  aiModels: (data) => http.post('/ai/models', data || {}),
+
   // 收集
   triggerCollect: () => http.post('/collect'),
   collectStatus: () => http.get('/collect/status'),

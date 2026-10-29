@@ -4,8 +4,10 @@ package web
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -250,6 +252,67 @@ func (s *Server) apiSaveSettings(w http.ResponseWriter, r *http.Request) {
 		s.DB.SetSetting("auto_briefing_push", v)
 	}
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// POST /api/v1/ai/models {endpoint?, api_key?} —— 拉取 OpenAI 兼容端点的可用模型列表
+// 请求体可选传端点/Key（用于保存前试连）；缺省回退到已保存的 AI 配置（用于验证已保存配置）。
+// 成功即代表端点 + Key 可用。
+func (s *Server) apiAIModels(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Endpoint string `json:"endpoint"`
+		APIKey   string `json:"api_key"`
+	}
+	_ = decodeBody(r, &req) // 允许空请求体（全部回退到已保存配置）
+	if ep := strings.TrimSpace(req.Endpoint); ep != "" {
+		req.Endpoint = ep
+	} else {
+		req.Endpoint = s.DB.GetSetting("ai_endpoint", "https://api.deepseek.com/v1")
+	}
+	if k := strings.TrimSpace(req.APIKey); k != "" {
+		req.APIKey = k
+	} else {
+		req.APIKey = s.DB.GetSetting("ai_api_key", "")
+	}
+	if req.APIKey == "" {
+		writeErr(w, 400, "请先填写 API Key（或已在下方保存过）")
+		return
+	}
+
+	client := &http.Client{Timeout: 20 * time.Second}
+	hreq, err := http.NewRequest(http.MethodGet, strings.TrimRight(req.Endpoint, "/")+"/models", nil)
+	if err != nil {
+		writeErr(w, 400, "端点地址无效")
+		return
+	}
+	hreq.Header.Set("Authorization", "Bearer "+req.APIKey)
+	resp, err := client.Do(hreq)
+	if err != nil {
+		writeErr(w, 502, "连接端点失败："+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if resp.StatusCode != 200 {
+		writeErr(w, 502, fmt.Sprintf("端点返回 %d：%s", resp.StatusCode, string(raw[:min(len(raw), 300)])))
+		return
+	}
+	var out struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil || len(out.Data) == 0 {
+		writeErr(w, 502, "端点未返回模型列表——请确认是 OpenAI 兼容端点（一般以 /v1 结尾）且 Key 有效")
+		return
+	}
+	ids := make([]string, 0, len(out.Data))
+	for _, m := range out.Data {
+		if m.ID != "" {
+			ids = append(ids, m.ID)
+		}
+	}
+	sort.Strings(ids)
+	writeJSON(w, map[string]any{"models": ids, "endpoint": req.Endpoint})
 }
 
 // ---------- collect ----------

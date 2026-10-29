@@ -7,7 +7,7 @@
     <div class="panel" style="margin-bottom: 16px;">
       <div style="font-weight: 600; color: var(--p-accent); margin-bottom: 4px;">AI 分析引擎</div>
       <div style="font-size: 12px; color: var(--p-text-3); margin-bottom: 14px;">
-        OpenAI 兼容端点：DeepSeek / 通义千问 / Kimi / OpenAI。配置后自动为情报生成中文摘要、威胁评级与通俗解读，保存即时生效。
+        OpenAI 兼容端点：DeepSeek / 通义千问 / Kimi / OpenAI。填写端点与 API Key 后点「获取模型列表」，即可从该账号实际可用的模型中自由选择。配置后自动为情报生成中文摘要、威胁评级与通俗解读，保存即时生效。
       </div>
       <el-form label-width="90">
         <el-form-item label="服务商">
@@ -19,11 +19,13 @@
           <el-input v-model="form.ai_endpoint" placeholder="https://api.deepseek.com/v1" />
         </el-form-item>
         <el-form-item label="模型">
-          <el-select v-if="provider !== '自定义'" v-model="form.ai_model"
-                     filterable allow-create default-first-fit style="width: 100%">
-            <el-option v-for="m in currentModels" :key="m.value" :label="m.label" :value="m.value" />
-          </el-select>
-          <el-input v-else v-model="form.ai_model" placeholder="模型名称，如 gpt-4o" />
+          <div style="display: flex; gap: 8px; width: 100%;">
+            <el-select v-model="form.ai_model" filterable allow-create default-first-fit
+                       style="flex: 1;" placeholder="点击右侧按钮获取，或直接输入模型名">
+              <el-option v-for="m in modelOptions" :key="m.value" :label="m.label" :value="m.value" />
+            </el-select>
+            <el-button :loading="loadingModels" @click="fetchModels">获取模型列表</el-button>
+          </div>
         </el-form-item>
         <el-form-item label="API Key">
           <el-input v-model="form.ai_api_key" type="password" show-password
@@ -83,7 +85,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
 
@@ -135,7 +137,18 @@ const providers = [
 ]
 
 const provider = ref('DeepSeek')
-const currentModels = computed(() => providers.find(p => p.name === provider.value)?.models || [])
+
+// 模型下拉选项：默认用预设，点击「获取模型列表」后替换为端点实际返回的模型
+const modelOptions = ref([])
+function presetModels() {
+  const p = providers.find(x => x.name === provider.value)
+  const list = p ? [...p.models] : []
+  // 当前已填的模型不在预设里也要能显示
+  if (form.value.ai_model && !list.some(m => m.value === form.value.ai_model)) {
+    list.unshift({ label: form.value.ai_model, value: form.value.ai_model })
+  }
+  modelOptions.value = list
+}
 
 function onProvider(name) {
   const p = providers.find(x => x.name === name)
@@ -143,6 +156,31 @@ function onProvider(name) {
     form.value.ai_endpoint = p.endpoint
     if (p.models.length) form.value.ai_model = p.models[0].value
   }
+  presetModels()
+}
+
+const loadingModels = ref(false)
+async function fetchModels() {
+  if (!form.value.ai_endpoint) {
+    ElMessage.warning('请先填写 API 端点')
+    return
+  }
+  loadingModels.value = true
+  try {
+    // api_key 留空时后端自动使用已保存的 Key
+    const r = await api.aiModels({
+      endpoint: form.value.ai_endpoint,
+      api_key: form.value.ai_api_key || undefined,
+    })
+    const ids = r.models || []
+    const list = ids.map(id => ({ label: id, value: id }))
+    // 当前选中的模型不在实际列表里也保留（可对比后手动换）
+    if (form.value.ai_model && !ids.includes(form.value.ai_model)) {
+      list.unshift({ label: form.value.ai_model + '（当前配置，端点未返回）', value: form.value.ai_model })
+    }
+    modelOptions.value = list
+    ElMessage.success(`已获取 ${ids.length} 个可用模型（端点与 Key 验证通过）`)
+  } finally { loadingModels.value = false }
 }
 
 // 按端点反推服务商（编辑已保存配置时）
@@ -162,6 +200,7 @@ async function load() {
   const s = await api.getSettings()
   Object.assign(form.value, s)
   provider.value = detectProvider(form.value.ai_endpoint)
+  presetModels()
 }
 
 async function save() {
