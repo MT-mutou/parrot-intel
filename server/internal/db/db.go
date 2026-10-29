@@ -759,6 +759,24 @@ func (d *DB) SeedDefaults() {
 		{Name: "NVD 最新漏洞", URL: "https://services.nvd.nist.gov/rest/json/cves/2.0", Category: strPtr("漏洞通报"), Type: "nvd"},
 		// GitHub 安全通告 API（开源生态漏洞/供应链风险，公开无需 Key）
 		{Name: "GitHub 安全通告", URL: "https://api.github.com/advisories", Category: strPtr("漏洞通报"), Type: "ghsa"},
+		// 奇安信威胁情报中心·重点漏洞（官网列表页为 Vue SPA 无法爬虫，走其公开 JSON API）
+		{Name: "奇安信威胁情报中心", URL: "https://ti.qianxin.com/vulnerability/list", Category: strPtr("漏洞通报"), Type: "qianxin"},
+		// === 国内厂商情报（服务端渲染页面 → 智能链接收集器，2026-10 逐源实测）===
+		// 阿里云漏洞库·高危漏洞（AVD：表格行内含 AVD 编号/名称/披露时间，高危库整体标记 high）
+		{Name: "阿里云漏洞库", URL: "https://avd.aliyun.com/high-risk/list", Category: strPtr("漏洞通报"), Type: "smartlink",
+			Config: strPtr(`{"link_pattern":"detail?id=AVD-","threat_level":"high","title_mode":"container"}`)},
+		// 360CERT 预警通告（服务端渲染，条目链接 /warning/detail?id=…）
+		{Name: "360CERT 预警通告", URL: "https://cert.360.cn/warning", Category: strPtr("漏洞通报"), Type: "smartlink",
+			Config: strPtr(`{"link_pattern":"/warning/detail"}`)},
+		// 华为 PSIRT 安全公告（首页服务端渲染最新公告列表，条目链接 /psirt/security-notices|advisories/…）
+		{Name: "华为 PSIRT 安全公告", URL: "https://www.huawei.com/cn/psirt", Category: strPtr("漏洞通报"), Type: "smartlink",
+			Config: strPtr(`{"link_pattern":"/psirt/security-"}`)},
+		// 安恒威胁情报社区·安全星图（公开资讯流，每日更新，相对时间「N天前」自动解析）
+		{Name: "安恒威胁情报", URL: "https://starmap.dbappsecurity.com.cn/info", Category: strPtr("厂商动态"), Type: "smartlink",
+			Config: strPtr(`{"link_pattern":"/info/"}`)},
+		// 深信服安全动态（官网新闻中心，条目链接 /news/<id>）
+		{Name: "深信服安全动态", URL: "https://www.sangfor.com.cn/news", Category: strPtr("厂商动态"), Type: "smartlink",
+			Config: strPtr(`{"link_pattern":"/news/"}`)},
 
 		// === 国际媒体 ===
 		{Name: "The Hacker News", URL: "https://feeds.feedburner.com/TheHackersNews", Category: strPtr("国际媒体")},
@@ -792,12 +810,17 @@ func (d *DB) SeedDefaults() {
 		if typ == "" {
 			typ = "rss"
 		}
-		// 同名源 → 更新为最新 URL/分类/类型（修复旧版本遗留的失效地址）
-		if res, err := d.sql.Exec(`UPDATE sources SET url=?, category=?, type=? WHERE name=?`,
-			s.URL, nullIfEmpty(cat), typ, s.Name); err == nil {
+		cfg := ""
+		if s.Config != nil {
+			cfg = *s.Config
+		}
+		// 同名源 → 更新为最新 URL/分类/类型（修复旧版本遗留的失效地址）；
+		// config 仅在默认源声明了配置时覆盖（COALESCE），避免清掉用户自定义配置
+		if res, err := d.sql.Exec(`UPDATE sources SET url=?, category=?, type=?, config=COALESCE(?, config) WHERE name=?`,
+			s.URL, nullIfEmpty(cat), typ, nullIfEmpty(cfg), s.Name); err == nil {
 			if n, _ := res.RowsAffected(); n == 0 {
-				d.sql.Exec(`INSERT OR IGNORE INTO sources (name, url, category, type) VALUES (?, ?, ?, ?)`,
-					s.Name, s.URL, nullIfEmpty(cat), typ)
+				d.sql.Exec(`INSERT OR IGNORE INTO sources (name, url, category, type, config) VALUES (?, ?, ?, ?, ?)`,
+					s.Name, s.URL, nullIfEmpty(cat), typ, nullIfEmpty(cfg))
 			}
 		}
 		names = append(names, s.Name)

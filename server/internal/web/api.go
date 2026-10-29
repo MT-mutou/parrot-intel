@@ -165,7 +165,7 @@ func (s *Server) apiAddSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch req.Type {
-	case "", "rss", "html", "nvd", "ghsa":
+	case "", "rss", "html", "smartlink", "nvd", "ghsa", "qianxin":
 	default:
 		writeErr(w, 400, "不支持的来源类型: "+req.Type)
 		return
@@ -178,6 +178,20 @@ func (s *Server) apiAddSource(w http.ResponseWriter, r *http.Request) {
 		}
 		if cfg["item"] == nil || cfg["title"] == nil || cfg["link"] == nil {
 			writeErr(w, 400, "爬虫配置需包含 item / title / link 选择器")
+			return
+		}
+	}
+	if req.Type == "smartlink" {
+		var cfg map[string]any
+		if strings.TrimSpace(req.Config) != "" {
+			if err := json.Unmarshal([]byte(req.Config), &cfg); err != nil {
+				writeErr(w, 400, "智能链接配置不是合法 JSON: "+err.Error())
+				return
+			}
+		}
+		pat, _ := cfg["link_pattern"].(string)
+		if strings.TrimSpace(pat) == "" {
+			writeErr(w, 400, "智能链接配置需包含 link_pattern（条目链接特征，如 /news/detail）")
 			return
 		}
 	}
@@ -343,6 +357,15 @@ func (s *Server) apiAICrawlerConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// SPA 空壳预检：Vue/React 单页应用的服务端 HTML 没有列表数据，AI 必然生成不出选择器。
+	// 提前给出针对性指引，避免用户浪费一轮 AI 调用后只看到晦涩的报错。
+	if looksLikeSPA(html) {
+		writeErr(w, 400, "该页面是 JS 动态渲染的单页应用（Vue/React），服务器抓到的 HTML 只有空壳、没有列表数据，无法用 CSS 选择器爬取。\n"+
+			"解决方案：① 奇安信威胁情报中心（ti.qianxin.com）已内置专用类型——添加来源时类型选「奇安信 TI」即可；"+
+			"② 其他站点请在浏览器按 F12 → Network → XHR 找到返回列表数据的 JSON 接口，或寻找其 RSS 地址。")
+		return
+	}
+
 	var cfg *ai.CrawlerConfig
 	var matched int
 	var samples []collector.CrawlerSample
@@ -350,7 +373,11 @@ func (s *Server) apiAICrawlerConfig(w http.ResponseWriter, r *http.Request) {
 	for attempt := 0; attempt < 2; attempt++ {
 		cfg, err = c.GenerateCrawlerConfig(pageURL, html, feedback)
 		if err != nil {
-			writeErr(w, 502, "AI 生成配置失败："+err.Error())
+			msg := "AI 生成配置失败：" + err.Error()
+			if strings.Contains(err.Error(), "必填选择器") {
+				msg += "\n页面可能缺少静态列表结构（如 JS 动态渲染）：奇安信 TI 等站点请改用内置专用类型，「来源类型」选「奇安信 TI」"
+			}
+			writeErr(w, 502, msg)
 			return
 		}
 		cfgJSON, _ := json.Marshal(cfg)
@@ -371,6 +398,25 @@ func (s *Server) apiAICrawlerConfig(w http.ResponseWriter, r *http.Request) {
 		"samples": samples,
 	})
 }
+
+// looksLikeSPA 判断页面 HTML 是否为 JS 单页应用空壳：
+// 特征为存在 <div id="app">/<div id="root"> 挂载点，且去除脚本与标签后可见文本极少。
+func looksLikeSPA(html string) bool {
+	lower := strings.ToLower(html)
+	hasMount := strings.Contains(lower, `id="app"`) || strings.Contains(lower, `id="root"`) ||
+		strings.Contains(lower, `id='app'`) || strings.Contains(lower, `id='root'`)
+	if !hasMount {
+		return false
+	}
+	text := scriptStyleRe.ReplaceAllString(html, "")
+	text = tagRe.ReplaceAllString(text, " ")
+	return len(strings.Fields(text)) < 200
+}
+
+var (
+	scriptStyleRe = regexp.MustCompile(`(?is)<(script|style)[^>]*>.*?</(script|style)>`)
+	tagRe         = regexp.MustCompile(`(?s)<[^>]*>`)
+)
 
 // ---------- collect ----------
 

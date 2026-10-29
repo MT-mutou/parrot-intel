@@ -2,6 +2,7 @@
 package collector
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -149,7 +151,7 @@ func (c *Collector) run() {
 	}
 }
 
-// fetchSource 按来源类型分发：rss / html（通用爬虫）/ nvd / ghsa
+// fetchSource 按来源类型分发：rss / html（通用爬虫）/ smartlink（智能链接）/ nvd / ghsa / qianxin
 func (c *Collector) fetchSource(s db.Source) (int, error) {
 	client := c.httpClient()
 	switch s.Type {
@@ -157,8 +159,13 @@ func (c *Collector) fetchSource(s db.Source) (int, error) {
 		return c.fetchNVD(s, client)
 	case "ghsa":
 		return c.fetchGHSA(s, client)
+	case "qianxin":
+		// 奇安信 TI 为国内站点：绕过 collector_proxy 直连，避免境外代理反而不可达
+		return c.fetchQianxin(s, &http.Client{Timeout: 30 * time.Second})
 	case "html":
 		return c.fetchHTML(s, client)
+	case "smartlink":
+		return c.fetchSmartlink(s, client)
 	default:
 		return c.fetchRSS(s, client)
 	}
@@ -372,6 +379,385 @@ func (c *Collector) fetchGHSA(s db.Source, client *http.Client) (int, error) {
 	}
 	return n, nil
 }
+
+// ---------- 奇安信威胁情报中心（重点漏洞公开 API）----------
+// ti.qianxin.com/vulnerability/list 为 Vue SPA（服务端 HTML 无列表数据，无法 CSS 爬虫），
+// 页面实际调用以下公开 JSON 接口（浏览器 F12 可见，无需登录/Key）：
+// POST https://ti.qianxin.com/alpha-api/v2/nox/api/web/portal/key_vuln/list
+
+func (c *Collector) fetchQianxin(s db.Source, client *http.Client) (int, error) {
+	api := s.URL
+	if api == "" || strings.Contains(api, "ti.qianxin.com/vulnerability") {
+		api = "https://ti.qianxin.com/alpha-api/v2/nox/api/web/portal/key_vuln/list"
+	}
+	body, _ := json.Marshal(map[string]any{
+		"page_no":      1,
+		"page_size":    50,
+		"vuln_keyword": "",
+	})
+	req, err := http.NewRequest("POST", api, bytes.NewReader(body))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", browserUA)
+	req.Header.Set("Referer", "https://ti.qianxin.com/vulnerability")
+	req.Header.Set("Origin", "https://ti.qianxin.com")
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return 0, fmt.Errorf("奇安信 TI API HTTP %d", resp.StatusCode)
+	}
+
+	var res struct {
+		Status  int    `json:"status"`
+		Message string `json:"message"`
+		Data    struct {
+			Data []struct {
+				ID          int    `json:"id"`
+				VulnName    string `json:"vuln_name"`
+				QvdCode     string `json:"qvd_code"`
+				CveCode     string `json:"cve_code"`
+				RatingLevel string `json:"rating_level"`
+				VulnType    string `json:"vuln_type"`
+				PublishTime string `json:"publish_time"`
+				Description string `json:"description"`
+				Tag         []struct {
+					Name string `json:"name"`
+				} `json:"tag"`
+			} `json:"data"`
+			Total int `json:"total"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&res); err != nil {
+		return 0, err
+	}
+	if res.Status != 10000 {
+		return 0, fmt.Errorf("奇安信 TI API 返回异常 status=%d: %s", res.Status, res.Message)
+	}
+
+	n := 0
+	for _, v := range res.Data.Data {
+		title := strings.TrimSpace(v.VulnName)
+		if title == "" {
+			continue
+		}
+		link := fmt.Sprintf("https://ti.qianxin.com/vulnerability/detail/%d", v.ID)
+		pub := time.Now()
+		if t, err := time.ParseInLocation("2006-01-02 15:04:05", v.PublishTime, time.Local); err == nil {
+			pub = t
+		} else if t, err := time.Parse(time.RFC3339, v.PublishTime); err == nil {
+			pub = t
+		}
+
+		// 标题带编号便于检索；摘要带等级/类型/标签
+		if v.QvdCode != "" {
+			title = v.QvdCode + ": " + title
+		} else if v.CveCode != "" {
+			title = v.CveCode + ": " + title
+		}
+		var tagNames []string
+		for _, t := range v.Tag {
+			if n := strings.TrimSpace(t.Name); n != "" {
+				tagNames = append(tagNames, n)
+			}
+		}
+		sumParts := []string{}
+		if v.RatingLevel != "" {
+			sumParts = append(sumParts, "等级："+v.RatingLevel)
+		}
+		if v.VulnType != "" {
+			sumParts = append(sumParts, "类型："+v.VulnType)
+		}
+		if len(tagNames) > 0 {
+			sumParts = append(sumParts, "标签："+strings.Join(tagNames, "、"))
+		}
+		if v.CveCode != "" {
+			sumParts = append(sumParts, v.CveCode)
+		}
+		summary := strings.Join(sumParts, "｜")
+		if v.Description != "" {
+			summary += "\n" + truncate(strings.TrimSpace(v.Description), 300)
+		}
+
+		var cves []string
+		if v.CveCode != "" {
+			cves = []string{strings.ToUpper(v.CveCode)}
+		}
+		allTags := append([]string{"奇安信TI", "漏洞通报"}, tagNames...)
+
+		id := hashID(link)
+		if c.DB.InsertArticle(id, truncate(title, 300), link, s.Name, s.URL, truncate(summary, 400), summary, pub.Format(time.RFC3339)) {
+			c.DB.SetArticleMeta(id, qaxLevelToThreat(v.RatingLevel), cves, allTags)
+			n++
+		}
+	}
+	return n, nil
+}
+
+// qaxLevelToThreat 奇安信中文等级 → 系统威胁等级
+func qaxLevelToThreat(l string) string {
+	switch strings.TrimSpace(l) {
+	case "极危", "高危":
+		return "high"
+	case "中危":
+		return "medium"
+	case "低危":
+		return "low"
+	}
+	return ""
+}
+
+// ---------- 智能链接收集器 ----------
+// 适用于「服务端渲染、无 RSS、条目链接有稳定路径特征」的站点
+// （360CERT / 华为 PSIRT / 阿里云漏洞库 AVD / 安恒星图 / 深信服 等）：
+// 无需依赖 CSS class——按 href 子串特征定位条目链接，标题取链接文本
+// （或父容器文本），发布时间从最近父容器文本中解析
+// （支持绝对时间与「N小时前 / N天前」相对时间）。
+
+// smartlinkConfig 智能链接源配置（sources.config 列，JSON）
+type smartlinkConfig struct {
+	ListURL     string `json:"list_url"`     // 列表页地址（为空则用来源 URL）
+	LinkPattern string `json:"link_pattern"` // 条目链接 href 子串特征（必填）
+	ThreatLevel string `json:"threat_level"` // 固定威胁等级（可选：high/medium/low）
+	TitleMode   string `json:"title_mode"`   // 标题来源：text=链接文本（默认）/ container=父容器文本
+	Base        string `json:"base"`         // 相对链接基准地址（可选）
+	MaxItems    int    `json:"max_items"`    // 最多采集条数（默认 100）
+}
+
+// 常见导航词：命中则跳过（防「阅读全文/查看更多」等误入库）
+var smartlinkTitleBlacklist = map[string]bool{
+	"更多": true, "查看更多": true, "更多内容": true, "下一页": true, "上一页": true,
+	"详情": true, "阅读全文": true, "全文": true, "read more": true, "more": true,
+}
+
+// 绝对时间：2026-10-28 14:57:27 / 2026/10/28 / 2026年10月28日（时间部分可选）
+var smartlinkDateAbs = regexp.MustCompile(
+	`(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?`)
+
+// 相对时间：3天前 / 5小时前 / 12分钟前
+var smartlinkDateRel = regexp.MustCompile(`(\d+)\s*(秒|分钟|分鐘|小时|個小时|天|日|周|週|月)前`)
+
+// parseSmartlinkDate 从文本中解析发布时间（先试相对时间，再试绝对时间）
+func parseSmartlinkDate(text string) (time.Time, bool) {
+	if strings.Contains(text, "刚刚") {
+		return time.Now(), true
+	}
+	if m := smartlinkDateRel.FindStringSubmatch(text); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		var d time.Duration
+		switch m[2] {
+		case "秒":
+			d = time.Duration(n) * time.Second
+		case "分钟", "分鐘":
+			d = time.Duration(n) * time.Minute
+		case "小时", "個小时":
+			d = time.Duration(n) * time.Hour
+		case "天", "日":
+			d = time.Duration(n) * 24 * time.Hour
+		case "周", "週":
+			d = time.Duration(n) * 7 * 24 * time.Hour
+		case "月":
+			d = time.Duration(n) * 30 * 24 * time.Hour
+		}
+		return time.Now().Add(-d), true
+	}
+	if m := smartlinkDateAbs.FindStringSubmatch(text); m != nil {
+		y, _ := strconv.Atoi(m[1])
+		mo, _ := strconv.Atoi(m[2])
+		dd, _ := strconv.Atoi(m[3])
+		h, mi, sec := 0, 0, 0
+		if m[4] != "" {
+			h, _ = strconv.Atoi(m[4])
+		}
+		if m[5] != "" {
+			mi, _ = strconv.Atoi(m[5])
+		}
+		if m[6] != "" {
+			sec, _ = strconv.Atoi(m[6])
+		}
+		if y < 2000 || mo < 1 || mo > 12 || dd < 1 || dd > 31 {
+			return time.Time{}, false
+		}
+		return time.Date(y, time.Month(mo), dd, h, mi, sec, 0, time.Local), true
+	}
+	return time.Time{}, false
+}
+
+// findSmartlinkDate 从链接附近解析发布时间：
+// ① 先看兄弟元素文本（典型结构：标题链接 + 旁边的日期/时间元素）
+// ② 再逐级向上找父容器（剔除全部链接文本，避免标题里的日期如
+//    「安全事件周报 2026-03-25 第13周」干扰真正的发布时间）
+func findSmartlinkDate(a *goquery.Selection) (time.Time, bool) {
+	if t, ok := parseSmartlinkDate(cleanSpace(a.Siblings().Text())); ok {
+		return t, true
+	}
+	p := a.Parent()
+	for i := 0; i < 5 && p.Length() > 0; i++ {
+		txt := p.Text()
+		if len([]rune(txt)) <= 1200 {
+			// 剔除容器内全部链接文本后再找日期
+			noLinks := cleanSpace(p.Clone().Find("a").Remove().End().Text())
+			if t, ok := parseSmartlinkDate(noLinks); ok {
+				return t, true
+			}
+		}
+		p = p.Parent()
+	}
+	return time.Time{}, false
+}
+
+// cleanSpace 合并连续空白
+func cleanSpace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// trimAtDate 截掉文本中第一个日期及其后的内容（container 标题模式用）
+func trimAtDate(s string) string {
+	if loc := smartlinkDateAbs.FindStringIndex(s); loc != nil {
+		s = s[:loc[0]]
+	}
+	if loc := smartlinkDateRel.FindStringIndex(s); loc != nil {
+		s = s[:loc[0]]
+	}
+	return strings.TrimSpace(s)
+}
+
+// smartEntry 解析出的一条条目
+type smartEntry struct {
+	Title string
+	Link  string
+	Pub   time.Time
+}
+
+// parseSmartlinks 从文档中按链接特征提取条目（纯解析，便于单测）
+func parseSmartlinks(doc *goquery.Document, cfg smartlinkConfig, pageURL string) []smartEntry {
+	base := cfg.Base
+	if base == "" {
+		base = pageURL
+	}
+	baseURL, baseErr := url.Parse(base)
+
+	var out []smartEntry
+	seen := map[string]bool{}
+	doc.Find("a[href]").Each(func(_ int, a *goquery.Selection) {
+		if len(out) >= cfg.MaxItems {
+			return
+		}
+		href, _ := a.Attr("href")
+		href = strings.TrimSpace(href)
+		if href == "" || !strings.Contains(href, cfg.LinkPattern) {
+			return
+		}
+		link := href
+		if !strings.HasPrefix(link, "http://") && !strings.HasPrefix(link, "https://") && baseErr == nil {
+			if lu, err := url.Parse(link); err == nil {
+				link = baseURL.ResolveReference(lu).String()
+			}
+		}
+		if seen[link] {
+			return
+		}
+		seen[link] = true
+
+		// 标题：默认取链接文本；container 模式向上找「含日期的条目容器」
+		//（表格类站点链接文本往往只有编号，如 AVD-2026-111497）
+		title := strings.TrimSpace(a.Text())
+		if cfg.TitleMode == "container" {
+			p := a.Parent()
+			found := ""
+			for i := 0; i < 5 && p.Length() > 0; i++ {
+				txt := cleanSpace(p.Text())
+				if r := len([]rune(txt)); r > 8 && r <= 1200 {
+					if _, ok := parseSmartlinkDate(txt); ok {
+						found = trimAtDate(txt) // 标题+日期同现 → 条目容器
+						break
+					}
+					if found == "" {
+						found = trimAtDate(txt) // 暂存第一个合格容器，防无日期站点
+					}
+				}
+				p = p.Parent()
+			}
+			if found != "" {
+				title = found
+			}
+		}
+		if title == "" {
+			if t, ok := a.Attr("title"); ok {
+				title = strings.TrimSpace(t)
+			}
+		}
+		if title == "" || smartlinkTitleBlacklist[strings.ToLower(title)] || len([]rune(title)) < 4 {
+			return
+		}
+
+		pub := time.Now()
+		if t, ok := findSmartlinkDate(a); ok {
+			pub = t
+		}
+		out = append(out, smartEntry{Title: truncate(title, 300), Link: link, Pub: pub})
+	})
+	return out
+}
+
+func (c *Collector) fetchSmartlink(s db.Source, client *http.Client) (int, error) {
+	cfg := smartlinkConfig{}
+	if s.Config != nil && strings.TrimSpace(*s.Config) != "" {
+		if err := json.Unmarshal([]byte(*s.Config), &cfg); err != nil {
+			return 0, fmt.Errorf("智能链接配置 JSON 解析失败: %v", err)
+		}
+	}
+	pageURL := cfg.ListURL
+	if pageURL == "" {
+		pageURL = s.URL
+	}
+	if pageURL == "" {
+		return 0, errors.New("缺少 list_url（或来源 URL）")
+	}
+	if cfg.LinkPattern == "" {
+		return 0, errors.New("智能链接配置缺少 link_pattern（条目链接特征）")
+	}
+	if cfg.MaxItems <= 0 {
+		cfg.MaxItems = 100
+	}
+
+	req, _ := http.NewRequest("GET", pageURL, nil)
+	req.Header.Set("User-Agent", browserUA)
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return 0, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return 0, err
+	}
+
+	entries := parseSmartlinks(doc, cfg, pageURL)
+	if len(entries) == 0 {
+		return 0, fmt.Errorf("未找到包含 %q 的条目链接，页面结构可能已变化（或为 JS 动态渲染页面）", cfg.LinkPattern)
+	}
+	n := 0
+	for _, e := range entries {
+		id := hashID(e.Link)
+		if c.DB.InsertArticle(id, e.Title, e.Link, s.Name, s.URL, "", "", e.Pub.Format(time.RFC3339)) {
+			switch cfg.ThreatLevel {
+			case "high", "medium", "low":
+				c.DB.SetArticleMeta(id, cfg.ThreatLevel, extractCVEs(e.Title), []string{s.Name, "厂商通告"})
+			}
+			n++
+		}
+	}
+	return n, nil
+}
+
 
 // ---------- 通用网页爬虫（CSS 选择器配置）----------
 

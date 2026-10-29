@@ -2,7 +2,7 @@
 
 威胁情报聚合平台 · **前后端分离架构** · Vue3 前端 + Go API 服务
 
-从 **40+ 国内外安全信息源**（FreeBuf、安全客、The Hacker News、CISA 等）自动收集安全资讯，可选接入 AI（OpenAI 兼容：**DeepSeek / 通义 / Kimi / OpenAI**）自动生成中文摘要、威胁评级与通俗解读，每日简报**一键推送钉钉 / 企业微信 / 飞书 / 微信（Server酱）**。
+从 **45+ 国内外安全信息源**（FreeBuf、安全客、The Hacker News、CISA 等）自动收集安全资讯，可选接入 AI（OpenAI 兼容：**DeepSeek / 通义 / Kimi / OpenAI**）自动生成中文摘要、威胁评级与通俗解读，每日简报**一键推送钉钉 / 企业微信 / 飞书 / 微信（Server酱）**。
 
 ## 架构（标准前后端分离）
 
@@ -64,7 +64,8 @@ parrot-intel/
 ## 功能
 
 - **登录安全**：系统登录（默认账号 `yingwu` / 密码 `yingwu`，**首次登录强制修改密码**），bcrypt 哈希存储 + 会话 Cookie + 全 API 鉴权；修改密码后自动踢掉其他端
-- **情报收集**：40 个**逐源实测可用**的国内外安全源（安全媒体 / 技术研究 / 厂商研究 / 漏洞通报 / 国际媒体 / AI 安全 6 大分类）并发抓取，自动去重，来源健康状态监控，每日定时收集（时间可配）
+- **情报收集**：45+ 个**逐源实测可用**的国内外安全源（安全媒体 / 技术研究 / 厂商研究 / 漏洞通报 / 国际媒体 / AI 安全等分类）并发抓取，自动去重，来源健康状态监控，每日定时收集（时间可配）；多类型收集引擎——RSS 订阅 / 网页爬虫（CSS 选择器）/ 智能链接（按链接特征）/ NVD / GitHub 通告 / 奇安信 TI API
+- **国内厂商情报**：奇安信威胁情报中心（公开 API）、阿里云漏洞库 AVD 高危、360CERT 预警通告、华为 PSIRT 安全公告、安恒威胁情报（安全星图）、深信服安全动态、腾讯玄武实验室（RSS）一站式接入
 - **AI 分析**（可选，OpenAI 兼容）：**DeepSeek / 通义千问 / Kimi / OpenAI 四家预设最新模型**（deepseek-chat、qwen-max-latest、kimi-latest、gpt-5 等，支持自定义模型）；每篇情报自动生成中文摘要、威胁评级（高/中/低）、分类标签、CVE 提取、💬「说人话」通俗解读；配置保存即时生效
 - **白天/夜间双主题**：顶栏一键切换 ☀️/🌙，偏好持久化，仪表盘图表随主题重绘
 - **每日简报（角色化）**：按读者角色定制简报模板——内置**领导决策版**（形势政策、风险影响与决策建议，无技术细节）、**安全管理版**（漏洞风险、处置优先级与行动清单）、**技术运营版**（CVE 细节、在野利用与修复方案）、**合规风控版**（法规监管、合规义务与上报要求）；支持自定义模板（角色 + 9 类内容模块自由勾选 + 详略程度 + 补充要求）；同一天多模板简报独立留存，按「日期 + 模板」回看历史；支持为历史日期补生成当日简报
@@ -73,7 +74,7 @@ parrot-intel/
 - **情报流**：多维筛选（分类/威胁等级/未读/收藏）+ 搜索 + 分页，CVE 高亮，收藏/已读
 - **来源管理**：增删启停、失败原因展示、40 源预置
 
-> 情报源说明：默认 40 源均于 2026-10 逐源抓取验证（安全客已换用其 API 地址、Ars Technica / Wired 已更新为新地址，并新增腾讯玄武实验室、Unit42、Talos、Securelist、Check Point、ESET、微软安全、The Record、DFIR Report 等）。个别国际源对高频访问有临时限流，失败会在来源管理页显示，稍后自动恢复。
+> 情报源说明：默认源均于 2026-10 逐源抓取验证（安全客已换用其 API 地址、Ars Technica / Wired 已更新为新地址，并新增腾讯玄武实验室、Unit42、Talos、Securelist、Check Point、ESET、微软安全、The Record、DFIR Report 等；v2.3.1 新增国内厂商情报 7 家——奇安信 TI / 阿里云 AVD / 360CERT / 华为 PSIRT / 安恒星图 / 深信服 / 腾讯玄武）。个别国际源对高频访问有临时限流，失败会在来源管理页显示，稍后自动恢复。
 
 ## 本地开发
 
@@ -94,7 +95,7 @@ cd web && npm run build && API_PROXY_TARGET=http://127.0.0.1:8080 npm run previe
 
 ```bash
 # 服务器上执行（需已安装 Nginx）：
-curl -L -o /tmp/parrot-intel.tar.gz https://github.com/MT-mutou/parrot-intel/releases/download/v2.3.0/parrot-intel-v2.3.0.tar.gz
+curl -L -o /tmp/parrot-intel.tar.gz https://github.com/MT-mutou/parrot-intel/releases/download/v2.3.1/parrot-intel-v2.3.1.tar.gz
 mkdir -p /opt/parrot-intel-release
 tar -xzf /tmp/parrot-intel.tar.gz -C /opt/parrot-intel-release --strip-components=1
 cd /opt/parrot-intel-release && sudo bash deploy/deploy.sh
@@ -108,17 +109,17 @@ cd /opt/parrot-intel-release && sudo bash deploy/deploy.sh
 
 ```bash
 bash scripts/release.sh        # 或 make release
-# → release/parrot-intel-v2.3.0.tar.gz（前端产物 + linux/amd64 后端 + 部署配置）
+# → release/parrot-intel-v2.3.1.tar.gz（前端产物 + linux/amd64 后端 + 部署配置）
 ```
 
 #### ② 上传并一键部署（服务器需已安装 Nginx）
 
 ```bash
-scp release/parrot-intel-v2.3.0.tar.gz root@服务器IP:/tmp/
+scp release/parrot-intel-v2.3.1.tar.gz root@服务器IP:/tmp/
 
 # 服务器上：
 mkdir -p /opt/parrot-intel-release
-tar -xzf /tmp/parrot-intel-v2.3.0.tar.gz -C /opt/parrot-intel-release --strip-components=1
+tar -xzf /tmp/parrot-intel-v2.3.1.tar.gz -C /opt/parrot-intel-release --strip-components=1
 cd /opt/parrot-intel-release
 sudo bash deploy/deploy.sh
 ```

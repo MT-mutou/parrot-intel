@@ -59,22 +59,49 @@
           <el-radio-group v-model="form.type">
             <el-radio-button value="rss">RSS 订阅</el-radio-button>
             <el-radio-button value="html">网页爬虫</el-radio-button>
+            <el-radio-button value="smartlink">智能链接</el-radio-button>
             <el-radio-button value="nvd">NVD 漏洞库</el-radio-button>
             <el-radio-button value="ghsa">GitHub 通告</el-radio-button>
+            <el-radio-button value="qianxin">奇安信 TI</el-radio-button>
           </el-radio-group>
         </el-form-item>
         <el-form-item label="名称">
           <el-input v-model="form.name" placeholder="如 奇安信 CERT" />
         </el-form-item>
-        <el-form-item :label="form.type === 'rss' ? 'RSS URL' : (form.type === 'html' ? '列表页 URL' : 'API 地址')">
+        <el-form-item :label="form.type === 'rss' ? 'RSS URL' : (form.type === 'html' || form.type === 'smartlink' ? '列表页 URL' : 'API 地址')">
           <el-input v-model="form.url" :placeholder="urlPlaceholder" />
         </el-form-item>
-        <el-form-item v-if="form.type === 'nvd' || form.type === 'ghsa'">
+        <el-form-item v-if="form.type === 'nvd' || form.type === 'ghsa' || form.type === 'qianxin'">
           <div style="font-size: 12px; color: var(--p-text-3); line-height: 1.7;">
             {{ form.type === 'nvd'
               ? '官方 CVE API 2.0，无需 Key。自动拉取最近 72 小时新披露漏洞，CVSE 严重级别自动映射为威胁等级。'
-              : 'GitHub 安全通告 API（开源生态漏洞/供应链风险），无需 Key。自动拉取最近 7 天通告。' }}
+              : form.type === 'ghsa'
+              ? 'GitHub 安全通告 API（开源生态漏洞/供应链风险），无需 Key。自动拉取最近 7 天通告。'
+              : '奇安信威胁情报中心·重点漏洞列表（官网页面为 JS 动态渲染无法爬虫，这里直接调用其公开数据接口，无需登录）。拉取最新 50 条重点漏洞，中文等级（极危/高危/中危/低危）自动映射威胁等级，QVD/CVE 编号自动提取。' }}
             地址一般无需修改。
+          </div>
+        </el-form-item>
+        <el-form-item v-if="form.type === 'smartlink'" label="链接特征">
+          <el-input v-model="slForm.pattern" placeholder="条目链接的路径特征，如 /warning/detail" />
+          <div style="font-size: 12px; color: var(--p-text-3); margin-top: 4px; line-height: 1.7;">
+            适用于无 RSS 的普通网页：只要列表页条目链接带有稳定路径特征即可采集（无需 CSS 选择器）。
+            标题取链接文字，发布时间自动从条目附近解析（支持「3天前」相对时间）。
+          </div>
+        </el-form-item>
+        <el-form-item v-if="form.type === 'smartlink'" label="威胁等级">
+          <el-select v-model="slForm.threat" style="width: 100%" placeholder="不设置（由 AI 分析判定）">
+            <el-option label="高（如高危漏洞库）" value="high" />
+            <el-option label="中" value="medium" />
+            <el-option label="低" value="low" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="form.type === 'smartlink'" label="标题取自">
+          <el-radio-group v-model="slForm.titleMode">
+            <el-radio-button value="text">链接文字（默认）</el-radio-button>
+            <el-radio-button value="container">条目整行文本</el-radio-button>
+          </el-radio-group>
+          <div style="font-size: 12px; color: var(--p-text-3); margin-top: 4px;">
+            链接文字只有编号时（如 AVD-2026-111497），选「条目整行文本」可带出完整标题
           </div>
         </el-form-item>
         <el-form-item v-if="form.type === 'html'" label="爬虫配置">
@@ -121,6 +148,9 @@ const sources = ref([])
 const dialog = ref(false)
 const form = ref({ name: '', url: '', category: '安全媒体', type: 'rss', config: '' })
 
+// 智能链接类型结构化配置（保存时组装为 JSON）
+const slForm = ref({ pattern: '', threat: '', titleMode: 'text' })
+
 // AI 生成爬虫配置
 const generating = ref(false)
 const crawlerSamples = ref([])
@@ -154,16 +184,20 @@ const htmlConfigExample = `{
 const urlPlaceholder = computed(() => ({
   rss: 'https://example.com/rss',
   html: 'https://example.com/news（列表页）',
+  smartlink: 'https://example.com/news（列表页）',
   nvd: 'https://services.nvd.nist.gov/rest/json/cves/2.0',
   ghsa: 'https://api.github.com/advisories',
+  qianxin: 'https://ti.qianxin.com/vulnerability/list',
 }[form.value.type] || ''))
 
 function typeTag(t) {
   return {
     rss: { label: 'RSS', t: 'info' },
     html: { label: '爬虫', t: 'warning' },
+    smartlink: { label: '智能链接', t: 'success' },
     nvd: { label: 'NVD', t: 'danger' },
     ghsa: { label: 'GitHub', t: 'primary' },
+    qianxin: { label: '奇安信', t: 'success' },
   }[t || 'rss'] || { label: 'RSS', t: 'info' }
 }
 
@@ -199,10 +233,21 @@ async function add() {
     try { JSON.parse(form.value.config || '{}') }
     catch { ElMessage.warning('爬虫配置不是合法 JSON'); return }
   }
+  if (form.value.type === 'smartlink') {
+    if (!slForm.value.pattern) {
+      ElMessage.warning('请填写条目链接特征（link_pattern）')
+      return
+    }
+    const cfg = { link_pattern: slForm.value.pattern.trim() }
+    if (slForm.value.threat) cfg.threat_level = slForm.value.threat
+    if (slForm.value.titleMode === 'container') cfg.title_mode = 'container'
+    form.value.config = JSON.stringify(cfg)
+  }
   await api.addSource(form.value)
   ElMessage.success('已添加，可到概览页点「立即收集」验证')
   dialog.value = false
   form.value = { name: '', url: '', category: '安全媒体', type: 'rss', config: '' }
+  slForm.value = { pattern: '', threat: '', titleMode: 'text' }
   crawlerSamples.value = []
   crawlerMatched.value = 0
   load()

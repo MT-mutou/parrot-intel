@@ -20,7 +20,7 @@ import (
 )
 
 // Version 服务版本号（/api/v1/health 与根路径返回）
-const Version = "2.3.0"
+const Version = "2.3.1"
 
 // Server API 服务
 type Server struct {
