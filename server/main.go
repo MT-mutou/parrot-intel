@@ -107,7 +107,7 @@ func main() {
 	}
 }
 
-// autoBriefing 生成当日简报并推送全部启用渠道
+// autoBriefing 为所有启用的简报模板生成当日简报并推送全部启用渠道（v2.3.0 角色化）
 func autoBriefing(database *db.DB, aiFn func() *ai.Client, lg *log.Logger) {
 	items, err := database.TodayArticles()
 	if err != nil || len(items) == 0 {
@@ -119,44 +119,58 @@ func autoBriefing(database *db.DB, aiFn func() *ai.Client, lg *log.Logger) {
 		lg.Printf("[auto-briefing] 未配置 AI，跳过")
 		return
 	}
-	var bis []ai.BriefingItem
-	for _, it := range items {
-		sum, threat := "", ""
-		if it.Summary != nil {
-			sum = *it.Summary
-		}
-		if it.ThreatLevel != nil {
-			threat = *it.ThreatLevel
-		}
-		bis = append(bis, ai.BriefingItem{Title: it.Title, Summary: sum, Threat: threat})
-	}
-	md, err := c.GenerateBriefing(bis)
-	if err != nil {
-		lg.Printf("[auto-briefing] 生成失败: %v", err)
-		return
-	}
 	date := time.Now().Format("2006-01-02")
-	database.SaveBriefing(date, md)
-
-	channels, _ := database.EnabledChannels()
-	if len(channels) == 0 {
-		lg.Printf("[auto-briefing] 无启用渠道，仅保存")
+	profiles, err := database.ListBriefingProfiles()
+	if err != nil {
+		lg.Printf("[auto-briefing] 读取简报模板失败: %v", err)
 		return
 	}
-	title := "🦜 鹦鹉情报站 · 每日安全简报 " + date
-	for _, ch := range channels {
-		sender, err := notify.NewSender(ch.Type, ch.Webhook, ch.Secret)
+	for _, p := range profiles {
+		if p.Enabled != 1 {
+			continue
+		}
+		var bis []ai.BriefingItem
+		for _, it := range items {
+			sum, threat, cat := "", "", ""
+			if it.Summary != nil {
+				sum = *it.Summary
+			}
+			if it.ThreatLevel != nil {
+				threat = *it.ThreatLevel
+			}
+			if it.Category != nil {
+				cat = *it.Category
+			}
+			bis = append(bis, ai.BriefingItem{Title: it.Title, Summary: sum, Threat: threat, Category: cat})
+		}
+		prof := ai.BriefingProfile{Name: p.Name, Role: p.Role, Sections: p.Sections, Detail: p.Detail, CustomPrompt: p.CustomPrompt}
+		md, err := c.GenerateBriefingFor(date, bis, prof)
 		if err != nil {
-			database.UpdateChannelStatus(ch.ID, "error: "+err.Error())
+			lg.Printf("[auto-briefing] 「%s」生成失败: %v", p.Name, err)
 			continue
 		}
-		if err := sender.SendMarkdown(title, notify.TruncateMD(md, 18000)); err != nil {
-			database.UpdateChannelStatus(ch.ID, "error: "+err.Error())
-			lg.Printf("[auto-briefing] 推送 %s 失败: %v", ch.Name, err)
+		database.SaveBriefing(date, p.ID, md)
+		lg.Printf("[auto-briefing] 「%s」已生成并保存", p.Name)
+
+		channels, _ := database.EnabledChannels()
+		if len(channels) == 0 {
 			continue
 		}
-		database.UpdateChannelStatus(ch.ID, "success")
-		lg.Printf("[auto-briefing] 已推送 %s", ch.Name)
+		title := "🦜 鹦鹉情报站 · " + p.Name + " " + date
+		for _, ch := range channels {
+			sender, err := notify.NewSender(ch.Type, ch.Webhook, ch.Secret)
+			if err != nil {
+				database.UpdateChannelStatus(ch.ID, "error: "+err.Error())
+				continue
+			}
+			if err := sender.SendMarkdown(title, notify.TruncateMD(md, 18000)); err != nil {
+				database.UpdateChannelStatus(ch.ID, "error: "+err.Error())
+				lg.Printf("[auto-briefing] 推送 %s 失败: %v", ch.Name, err)
+				continue
+			}
+			database.UpdateChannelStatus(ch.ID, "success")
+			lg.Printf("[auto-briefing] 「%s」已推送 %s", p.Name, ch.Name)
+		}
 	}
 }
 

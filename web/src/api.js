@@ -73,11 +73,15 @@ export const api = {
   triggerCollect: () => http.post('/collect'),
   collectStatus: () => http.get('/collect/status'),
 
-  // 简报
-  getBriefing: (date) => http.get('/briefing', { params: { date } }),
-  getBriefingList: () => http.get('/briefings'),
-  generateBriefing: (date) => http.post('/briefing/generate', { date }),
-  pushBriefing: (date, channel_ids) => http.post('/briefing/push', { date, channel_ids }),
+  // 简报（v2.3.0 角色化：profile_id 区分模板；0 = 兼容旧版通用简报）
+  getBriefingProfiles: () => http.get('/briefing/profiles'),
+  addBriefingProfile: (data) => http.post('/briefing/profiles', data),
+  updateBriefingProfile: (id, data) => http.put(`/briefing/profiles/${id}`, data),
+  deleteBriefingProfile: (id) => http.delete(`/briefing/profiles/${id}`),
+  getBriefing: (date, profileId) => http.get('/briefing', { params: { date, profile_id: profileId } }),
+  getBriefingList: (profileId) => http.get('/briefings', { params: { profile_id: profileId } }),
+  generateBriefing: (date, profileId) => http.post('/briefing/generate', { date, profile_id: profileId }),
+  pushBriefing: (date, profileId, channelIds) => http.post('/briefing/push', { date, profile_id: profileId, channel_ids: channelIds }),
 
   // 推送渠道
   getChannels: () => http.get('/channels'),

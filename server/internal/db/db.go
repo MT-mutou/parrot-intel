@@ -89,9 +89,22 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 CREATE TABLE IF NOT EXISTS briefings (
-  date TEXT PRIMARY KEY,
+  date TEXT NOT NULL,
+  profile_id INTEGER NOT NULL DEFAULT 0,
   content TEXT,
-  generated_at TEXT
+  generated_at TEXT,
+  PRIMARY KEY (date, profile_id)
+);
+
+CREATE TABLE IF NOT EXISTS briefing_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  role TEXT NOT NULL,           -- executive/manager/technical/compliance/custom
+  sections TEXT NOT NULL,       -- JSON 数组：简报模块 key 列表
+  detail TEXT NOT NULL DEFAULT 'normal', -- brief/normal/detailed
+  custom_prompt TEXT,           -- 自定义读者描述 / 补充要求
+  enabled INTEGER DEFAULT 1,
+  created_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS push_channels (
@@ -121,7 +134,24 @@ CREATE TABLE IF NOT EXISTS push_channels (
 			}
 		}
 	}
-	return nil
+	// 旧库迁移：briefings 表升级为 (date, profile_id) 复合主键（v2.3.0 角色化简报）
+	var hasProfileCol int
+	if err := d.sql.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('briefings') WHERE name='profile_id'`).Scan(&hasProfileCol); err == nil && hasProfileCol == 0 {
+		if _, err := d.sql.Exec(`
+CREATE TABLE briefings_v230 (
+  date TEXT NOT NULL,
+  profile_id INTEGER NOT NULL DEFAULT 0,
+  content TEXT,
+  generated_at TEXT,
+  PRIMARY KEY (date, profile_id)
+);
+INSERT INTO briefings_v230 (date, profile_id, content, generated_at) SELECT date, 0, content, generated_at FROM briefings;
+DROP TABLE briefings;
+ALTER TABLE briefings_v230 RENAME TO briefings;`); err != nil {
+			return err
+		}
+	}
+	return d.seedBriefingProfiles()
 }
 
 // ---------- Push Channels ----------
@@ -245,19 +275,19 @@ func (d *DB) EnabledChannels() ([]PushChannel, error) {
 	return list, nil
 }
 
-// ListBriefingDates 简报日期列表（历史简报）
-func (d *DB) ListBriefingDates(limit int) ([]map[string]string, error) {
-	rows, err := d.sql.Query(`SELECT date, generated_at FROM briefings ORDER BY date DESC LIMIT ?`, limit)
+// ListBriefingDates 简报日期列表（按模板过滤的历史简报）
+func (d *DB) ListBriefingDates(profileID int64, limit int) ([]map[string]any, error) {
+	rows, err := d.sql.Query(`SELECT date, generated_at FROM briefings WHERE profile_id=? ORDER BY date DESC LIMIT ?`, profileID, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	list := []map[string]string{}
+	list := []map[string]any{}
 	for rows.Next() {
 		var date string
 		var gen sql.NullString
 		if err := rows.Scan(&date, &gen); err == nil {
-			list = append(list, map[string]string{"date": date, "generated_at": gen.String})
+			list = append(list, map[string]any{"date": date, "generated_at": gen.String, "profile_id": profileID})
 		}
 	}
 	return list, nil
@@ -503,10 +533,16 @@ func (d *DB) MarkRead(id string) error {
 
 // TodayArticles 简报用：当日文章摘要列表
 func (d *DB) TodayArticles() ([]Article, error) {
+	return d.ArticlesOnDate(time.Now().Format("2006-01-02"))
+}
+
+// ArticlesOnDate 简报用：指定日期（localtime）收集的文章列表，支持为历史日期补生成简报
+func (d *DB) ArticlesOnDate(date string) ([]Article, error) {
 	rows, err := d.sql.Query(
 		`SELECT ` + listCols + ` FROM articles
-		 WHERE date(collected_at) = date('now','localtime')
-		 ORDER BY CASE threat_level WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, published_at DESC LIMIT 200`)
+		 WHERE date(collected_at) = ?
+		 ORDER BY CASE threat_level WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, published_at DESC LIMIT 200`,
+		date)
 	if err != nil {
 		return nil, err
 	}
@@ -829,20 +865,142 @@ func (d *DB) AllSettings() map[string]string {
 
 // ---------- Briefing ----------
 
-// SaveBriefing 保存简报
-func (d *DB) SaveBriefing(date, content string) error {
+// BriefingProfile 简报模板（角色化定制）
+type BriefingProfile struct {
+	ID           int64    `json:"id"`
+	Name         string   `json:"name"`
+	Role         string   `json:"role"`    // executive/manager/technical/compliance/custom
+	Sections     []string `json:"sections"` // 模块 key 列表（顺序即输出顺序）
+	Detail       string   `json:"detail"`  // brief/normal/detailed
+	CustomPrompt string   `json:"custom_prompt"`
+	Enabled      int      `json:"enabled"`
+	CreatedAt    string   `json:"created_at"`
+}
+
+// ValidBriefingRoles 支持的角色
+var ValidBriefingRoles = map[string]bool{
+	"executive": true, "manager": true, "technical": true, "compliance": true, "custom": true,
+}
+
+// ValidBriefingDetails 支持的详略程度
+var ValidBriefingDetails = map[string]bool{"brief": true, "normal": true, "detailed": true}
+
+func scanProfile(row func(...any) error) (*BriefingProfile, error) {
+	var p BriefingProfile
+	var sections, custom sql.NullString
+	if err := row(&p.ID, &p.Name, &p.Role, &sections, &p.Detail, &custom, &p.Enabled, &p.CreatedAt); err != nil {
+		return nil, err
+	}
+	if sections.Valid && sections.String != "" {
+		_ = json.Unmarshal([]byte(sections.String), &p.Sections)
+	}
+	if custom.Valid {
+		p.CustomPrompt = custom.String
+	}
+	if len(p.Sections) == 0 {
+		p.Sections = []string{"overview", "actions"}
+	}
+	return &p, nil
+}
+
+// ListBriefingProfiles 全部简报模板
+func (d *DB) ListBriefingProfiles() ([]BriefingProfile, error) {
+	rows, err := d.sql.Query(`SELECT id, name, role, sections, detail, custom_prompt, enabled, created_at FROM briefing_profiles ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := []BriefingProfile{}
+	for rows.Next() {
+		p, err := scanProfile(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, *p)
+	}
+	return list, nil
+}
+
+// GetBriefingProfile 按 ID 取模板
+func (d *DB) GetBriefingProfile(id int64) (*BriefingProfile, error) {
+	return scanProfile(d.sql.QueryRow(
+		`SELECT id, name, role, sections, detail, custom_prompt, enabled, created_at FROM briefing_profiles WHERE id=?`, id).Scan)
+}
+
+// AddBriefingProfile 新增模板
+func (d *DB) AddBriefingProfile(p *BriefingProfile) (int64, error) {
 	mu.Lock()
 	defer mu.Unlock()
-	_, err := d.sql.Exec(`INSERT INTO briefings (date, content, generated_at) VALUES (?, ?, ?)
-		ON CONFLICT(date) DO UPDATE SET content=excluded.content, generated_at=excluded.generated_at`,
-		date, content, time.Now().Format(time.RFC3339))
+	sec, _ := json.Marshal(p.Sections)
+	res, err := d.sql.Exec(
+		`INSERT INTO briefing_profiles (name, role, sections, detail, custom_prompt, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		p.Name, p.Role, string(sec), p.Detail, nullIfEmpty(p.CustomPrompt), p.Enabled, time.Now().Format(time.RFC3339))
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// UpdateBriefingProfile 更新模板
+func (d *DB) UpdateBriefingProfile(p *BriefingProfile) error {
+	mu.Lock()
+	defer mu.Unlock()
+	sec, _ := json.Marshal(p.Sections)
+	_, err := d.sql.Exec(
+		`UPDATE briefing_profiles SET name=?, role=?, sections=?, detail=?, custom_prompt=?, enabled=? WHERE id=?`,
+		p.Name, p.Role, string(sec), p.Detail, nullIfEmpty(p.CustomPrompt), p.Enabled, p.ID)
 	return err
 }
 
-// GetBriefing 按日期取简报
-func (d *DB) GetBriefing(date string) (string, error) {
+// DeleteBriefingProfile 删除模板（其历史简报一并删除）
+func (d *DB) DeleteBriefingProfile(id int64) error {
+	mu.Lock()
+	defer mu.Unlock()
+	if _, err := d.sql.Exec(`DELETE FROM briefings WHERE profile_id=?`, id); err != nil {
+		return err
+	}
+	_, err := d.sql.Exec(`DELETE FROM briefing_profiles WHERE id=?`, id)
+	return err
+}
+
+// seedBriefingProfiles 首次运行种子 4 个内置角色模板（表为空时才写入）
+func (d *DB) seedBriefingProfiles() error {
+	var cnt int
+	if err := d.sql.QueryRow(`SELECT COUNT(*) FROM briefing_profiles`).Scan(&cnt); err != nil {
+		return err
+	}
+	if cnt > 0 {
+		return nil
+	}
+	defaults := []BriefingProfile{
+		{Name: "领导决策版", Role: "executive", Sections: []string{"overview", "policy", "incidents", "actions"}, Detail: "brief"},
+		{Name: "安全管理版", Role: "manager", Sections: []string{"overview", "vulnerabilities", "incidents", "exploitation", "actions"}, Detail: "normal"},
+		{Name: "技术运营版", Role: "technical", Sections: []string{"vulnerabilities", "exploitation", "research", "actions"}, Detail: "detailed"},
+		{Name: "合规风控版", Role: "compliance", Sections: []string{"policy", "incidents", "overview", "actions"}, Detail: "normal"},
+	}
+	for i := range defaults {
+		defaults[i].Enabled = 1
+		if _, err := d.AddBriefingProfile(&defaults[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SaveBriefing 保存简报（按日期 + 模板）
+func (d *DB) SaveBriefing(date string, profileID int64, content string) error {
+	mu.Lock()
+	defer mu.Unlock()
+	_, err := d.sql.Exec(`INSERT INTO briefings (date, profile_id, content, generated_at) VALUES (?, ?, ?, ?)
+		ON CONFLICT(date, profile_id) DO UPDATE SET content=excluded.content, generated_at=excluded.generated_at`,
+		date, profileID, content, time.Now().Format(time.RFC3339))
+	return err
+}
+
+// GetBriefing 按日期 + 模板取简报
+func (d *DB) GetBriefing(date string, profileID int64) (string, error) {
 	var c sql.NullString
-	err := d.sql.QueryRow(`SELECT content FROM briefings WHERE date=?`, date).Scan(&c)
+	err := d.sql.QueryRow(`SELECT content FROM briefings WHERE date=? AND profile_id=?`, date, profileID).Scan(&c)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}

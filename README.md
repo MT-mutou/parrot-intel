@@ -67,7 +67,7 @@ parrot-intel/
 - **情报收集**：40 个**逐源实测可用**的国内外安全源（安全媒体 / 技术研究 / 厂商研究 / 漏洞通报 / 国际媒体 / AI 安全 6 大分类）并发抓取，自动去重，来源健康状态监控，每日定时收集（时间可配）
 - **AI 分析**（可选，OpenAI 兼容）：**DeepSeek / 通义千问 / Kimi / OpenAI 四家预设最新模型**（deepseek-chat、qwen-max-latest、kimi-latest、gpt-5 等，支持自定义模型）；每篇情报自动生成中文摘要、威胁评级（高/中/低）、分类标签、CVE 提取、💬「说人话」通俗解读；配置保存即时生效
 - **白天/夜间双主题**：顶栏一键切换 ☀️/🌙，偏好持久化，仪表盘图表随主题重绘
-- **每日简报**：AI 汇总当日情报生成管理层简报，历史简报按日回看
+- **每日简报（角色化）**：按读者角色定制简报模板——内置**领导决策版**（形势政策、风险影响与决策建议，无技术细节）、**安全管理版**（漏洞风险、处置优先级与行动清单）、**技术运营版**（CVE 细节、在野利用与修复方案）、**合规风控版**（法规监管、合规义务与上报要求）；支持自定义模板（角色 + 9 类内容模块自由勾选 + 详略程度 + 补充要求）；同一天多模板简报独立留存，按「日期 + 模板」回看历史；支持为历史日期补生成当日简报
 - **一键推送**：钉钉 / 企业微信 / 飞书 / 微信（Server酱）四渠道，卡片式管理、逐渠道测试、单渠道或全渠道推送；收集完成后可自动推送
 - **态势总览**：关键指标卡、近 7 日趋势、威胁等级分布、分类分布、来源 TOP（ECharts）
 - **情报流**：多维筛选（分类/威胁等级/未读/收藏）+ 搜索 + 分页，CVE 高亮，收藏/已读
@@ -94,7 +94,7 @@ cd web && npm run build && API_PROXY_TARGET=http://127.0.0.1:8080 npm run previe
 
 ```bash
 # 服务器上执行（需已安装 Nginx）：
-curl -L -o /tmp/parrot-intel.tar.gz https://github.com/MT-mutou/parrot-intel/releases/download/v2.2.6/parrot-intel-v2.2.6.tar.gz
+curl -L -o /tmp/parrot-intel.tar.gz https://github.com/MT-mutou/parrot-intel/releases/download/v2.3.0/parrot-intel-v2.3.0.tar.gz
 mkdir -p /opt/parrot-intel-release
 tar -xzf /tmp/parrot-intel.tar.gz -C /opt/parrot-intel-release --strip-components=1
 cd /opt/parrot-intel-release && sudo bash deploy/deploy.sh
@@ -108,17 +108,17 @@ cd /opt/parrot-intel-release && sudo bash deploy/deploy.sh
 
 ```bash
 bash scripts/release.sh        # 或 make release
-# → release/parrot-intel-v2.2.6.tar.gz（前端产物 + linux/amd64 后端 + 部署配置）
+# → release/parrot-intel-v2.3.0.tar.gz（前端产物 + linux/amd64 后端 + 部署配置）
 ```
 
 #### ② 上传并一键部署（服务器需已安装 Nginx）
 
 ```bash
-scp release/parrot-intel-v2.2.6.tar.gz root@服务器IP:/tmp/
+scp release/parrot-intel-v2.3.0.tar.gz root@服务器IP:/tmp/
 
 # 服务器上：
 mkdir -p /opt/parrot-intel-release
-tar -xzf /tmp/parrot-intel-v2.2.6.tar.gz -C /opt/parrot-intel-release --strip-components=1
+tar -xzf /tmp/parrot-intel-v2.3.0.tar.gz -C /opt/parrot-intel-release --strip-components=1
 cd /opt/parrot-intel-release
 sudo bash deploy/deploy.sh
 ```

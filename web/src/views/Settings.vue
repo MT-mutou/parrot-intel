@@ -50,7 +50,7 @@
         <el-form-item label="自动推送简报">
           <el-switch v-model="form.auto_briefing_push" />
           <span style="margin-left: 10px; font-size: 12px; color: var(--p-text-3);">
-            每日收集完成后自动生成简报并推送到全部启用渠道
+            每日收集完成后，为所有「启用」的简报模板分别生成简报并推送到全部启用渠道（模板可在简报页管理）
           </span>
         </el-form-item>
       </el-form>

@@ -391,23 +391,158 @@ func (s *Server) apiCollectStatus(w http.ResponseWriter, r *http.Request) {
 
 // ---------- briefing ----------
 
-// GET /api/v1/briefing?date=2006-01-02
+// aiProfile db 模板 → ai 模板
+func aiProfile(p *db.BriefingProfile) ai.BriefingProfile {
+	return ai.BriefingProfile{
+		Name:         p.Name,
+		Role:         p.Role,
+		Sections:     p.Sections,
+		Detail:       p.Detail,
+		CustomPrompt: p.CustomPrompt,
+	}
+}
+
+// parseProfileID 从查询参数取 profile_id（缺省/非法 → 0 通用简报，兼容旧数据）
+func parseProfileID(r *http.Request) int64 {
+	id, _ := strconv.ParseInt(r.URL.Query().Get("profile_id"), 10, 64)
+	return id
+}
+
+// GET /api/v1/briefing/profiles —— 简报模板列表（含角色/模块目录供前端渲染）
+func (s *Server) apiBriefingProfileList(w http.ResponseWriter, r *http.Request) {
+	list, err := s.DB.ListBriefingProfiles()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{
+		"profiles":  list,
+		"roles":     ai.BriefingRoles,
+		"sections":  ai.BriefingSectionCatalog,
+		"details":   []string{"brief", "normal", "detailed"},
+	})
+}
+
+// POST /api/v1/briefing/profiles {name,role,sections,detail,custom_prompt,enabled?}
+func (s *Server) apiBriefingProfileAdd(w http.ResponseWriter, r *http.Request) {
+	p, err := decodeBriefingProfile(r, 0)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	id, err := s.DB.AddBriefingProfile(p)
+	if err != nil {
+		writeErr(w, 500, "保存失败："+err.Error())
+		return
+	}
+	p.ID = id
+	writeJSON(w, p)
+}
+
+// PUT /api/v1/briefing/profiles/{id}
+func (s *Server) apiBriefingProfileUpdate(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, 400, "ID 非法")
+		return
+	}
+	if _, err := s.DB.GetBriefingProfile(id); err != nil {
+		writeErr(w, 404, "模板不存在")
+		return
+	}
+	p, err := decodeBriefingProfile(r, id)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	if err := s.DB.UpdateBriefingProfile(p); err != nil {
+		writeErr(w, 500, "保存失败："+err.Error())
+		return
+	}
+	writeJSON(w, p)
+}
+
+// DELETE /api/v1/briefing/profiles/{id}
+func (s *Server) apiBriefingProfileDelete(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, 400, "ID 非法")
+		return
+	}
+	if err := s.DB.DeleteBriefingProfile(id); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// decodeBriefingProfile 解析并校验模板请求体
+func decodeBriefingProfile(r *http.Request, id int64) (*db.BriefingProfile, error) {
+	var req struct {
+		Name         string   `json:"name"`
+		Role         string   `json:"role"`
+		Sections     []string `json:"sections"`
+		Detail       string   `json:"detail"`
+		CustomPrompt string   `json:"custom_prompt"`
+		Enabled      *int     `json:"enabled"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		return nil, fmt.Errorf("请求体错误")
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		return nil, fmt.Errorf("模板名称必填")
+	}
+	if !db.ValidBriefingRoles[req.Role] {
+		return nil, fmt.Errorf("角色必须是 executive / manager / technical / compliance / custom")
+	}
+	if !db.ValidBriefingDetails[req.Detail] {
+		return nil, fmt.Errorf("详略程度必须是 brief / normal / detailed")
+	}
+	if req.Role == "custom" && strings.TrimSpace(req.CustomPrompt) == "" {
+		return nil, fmt.Errorf("自定义角色需填写读者描述")
+	}
+	// 模块 key 白名单过滤（保持用户勾选顺序）
+	valid := map[string]bool{}
+	for _, s := range ai.BriefingSectionCatalog {
+		valid[s.Key] = true
+	}
+	var secs []string
+	for _, k := range req.Sections {
+		if valid[k] {
+			secs = append(secs, k)
+		}
+	}
+	if len(secs) == 0 {
+		return nil, fmt.Errorf("至少选择一个内容模块")
+	}
+	enabled := 1
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	return &db.BriefingProfile{
+		ID: id, Name: req.Name, Role: req.Role, Sections: secs,
+		Detail: req.Detail, CustomPrompt: strings.TrimSpace(req.CustomPrompt), Enabled: enabled,
+	}, nil
+}
+
+// GET /api/v1/briefing?date=2006-01-02&profile_id=1
 func (s *Server) apiGetBriefing(w http.ResponseWriter, r *http.Request) {
 	date := r.URL.Query().Get("date")
 	if date == "" {
 		date = time.Now().Format("2006-01-02")
 	}
-	content, err := s.DB.GetBriefing(date)
+	content, err := s.DB.GetBriefing(date, parseProfileID(r))
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, map[string]string{"date": date, "content": content})
+	writeJSON(w, map[string]any{"date": date, "profile_id": parseProfileID(r), "content": content})
 }
 
-// GET /api/v1/briefings —— 历史简报列表
+// GET /api/v1/briefings?profile_id=1 —— 历史简报列表（按模板过滤）
 func (s *Server) apiBriefingList(w http.ResponseWriter, r *http.Request) {
-	list, err := s.DB.ListBriefingDates(30)
+	list, err := s.DB.ListBriefingDates(parseProfileID(r), 60)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -415,24 +550,42 @@ func (s *Server) apiBriefingList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, list)
 }
 
-// POST /api/v1/briefing/generate {date?}
+// POST /api/v1/briefing/generate {date?, profile_id?}
 func (s *Server) apiBriefingGenerate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Date string `json:"date"`
+		Date      string `json:"date"`
+		ProfileID int64  `json:"profile_id"`
 	}
 	_ = decodeBody(r, &req)
 	date := req.Date
 	if date == "" {
 		date = time.Now().Format("2006-01-02")
 	}
+	// profile_id=0：兼容旧版通用简报（无模板定义时使用默认管理视角）
+	var prof ai.BriefingProfile
+	if req.ProfileID > 0 {
+		p, err := s.DB.GetBriefingProfile(req.ProfileID)
+		if err != nil {
+			writeErr(w, 404, "简报模板不存在")
+			return
+		}
+		if p.Enabled != 1 {
+			writeErr(w, 400, "模板已停用，请先在模板管理中启用")
+			return
+		}
+		prof = aiProfile(p)
+	} else {
+		prof = ai.BriefingProfile{Name: "每日安全简报", Role: "manager",
+			Sections: []string{"overview", "vulnerabilities", "incidents", "actions"}, Detail: "normal"}
+	}
 
-	items, err := s.DB.TodayArticles()
+	items, err := s.DB.ArticlesOnDate(date)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
 	if len(items) == 0 {
-		writeErr(w, 400, "今日暂无文章，请先收集")
+		writeErr(w, 400, date+" 当日暂无文章，请先收集")
 		return
 	}
 	c := s.AI()
@@ -450,21 +603,26 @@ func (s *Server) apiBriefingGenerate(w http.ResponseWriter, r *http.Request) {
 		if it.ThreatLevel != nil {
 			threat = *it.ThreatLevel
 		}
-		bis = append(bis, ai.BriefingItem{Title: it.Title, Summary: sum, Threat: threat})
+		cat := ""
+		if it.Category != nil {
+			cat = *it.Category
+		}
+		bis = append(bis, ai.BriefingItem{Title: it.Title, Summary: sum, Threat: threat, Category: cat})
 	}
-	md, err := c.GenerateBriefing(bis)
+	md, err := c.GenerateBriefingFor(date, bis, prof)
 	if err != nil {
 		writeErr(w, 502, "简报生成失败："+err.Error())
 		return
 	}
-	s.DB.SaveBriefing(date, md)
-	writeJSON(w, map[string]string{"date": date, "content": md})
+	s.DB.SaveBriefing(date, req.ProfileID, md)
+	writeJSON(w, map[string]any{"date": date, "profile_id": req.ProfileID, "content": md})
 }
 
-// POST /api/v1/briefing/push {date?, channel_ids?}
+// POST /api/v1/briefing/push {date?, profile_id?, channel_ids?}
 func (s *Server) apiBriefingPush(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Date       string  `json:"date"`
+		ProfileID  int64   `json:"profile_id"`
 		ChannelIDs []int64 `json:"channel_ids"`
 	}
 	if err := decodeBody(r, &req); err != nil {
@@ -475,10 +633,17 @@ func (s *Server) apiBriefingPush(w http.ResponseWriter, r *http.Request) {
 	if date == "" {
 		date = time.Now().Format("2006-01-02")
 	}
-	content, _ := s.DB.GetBriefing(date)
+	content, _ := s.DB.GetBriefing(date, req.ProfileID)
 	if content == "" {
-		writeErr(w, 400, "当日简报尚未生成，请先生成")
+		writeErr(w, 400, "当日该模板简报尚未生成，请先生成")
 		return
+	}
+	// 推送标题带模板名
+	profName := "每日安全简报"
+	if req.ProfileID > 0 {
+		if p, err := s.DB.GetBriefingProfile(req.ProfileID); err == nil {
+			profName = p.Name
+		}
 	}
 
 	channels, err := s.DB.ListChannels()
@@ -512,7 +677,7 @@ func (s *Server) apiBriefingPush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	title := "🦜 鹦鹉情报站 · 每日安全简报 " + date
+	title := "🦜 鹦鹉情报站 · " + profName + " " + date
 	type pushResult struct {
 		ID    int64  `json:"id"`
 		Name  string `json:"name"`
