@@ -13,9 +13,15 @@ const http = axios.create({
 http.interceptors.response.use(
   (resp) => resp.data,
   (err) => {
+    const status = err.response?.status
+    const url = err.config?.url || ''
+    // /auth/me 的 401 是登录页的会话探测（预期状态），静默即可，不弹提示
+    if (status === 401 && url.includes('/auth/me')) {
+      return Promise.reject(new Error('未登录'))
+    }
     const msg = err.response?.data?.error || err.message || '请求失败'
     // 会话失效：跳转登录页（避免在登录页本身循环）
-    if (err.response?.status === 401 && !location.pathname.startsWith('/login')) {
+    if (status === 401 && !location.pathname.startsWith('/login')) {
       ElMessage.warning('会话已过期，请重新登录')
       location.href = '/login'
     } else {
